@@ -25,6 +25,8 @@ export const api = {
   logout: () => request('/api/master/logout', { method: 'POST' }),
 
   dashboard: () => request('/api/master/dashboard'),
+  revenue: (month) =>
+    request('/api/master/revenue?month=' + encodeURIComponent(month)),
   settings: () => request('/api/master/settings'),
   saveSettings: (payload) =>
     request('/api/master/settings', {
