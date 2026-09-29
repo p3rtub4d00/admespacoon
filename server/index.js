@@ -772,13 +772,12 @@ app.post('/api/webhooks/asaas', async (req, res, next) => {
 
     await WebhookEvent.create({ id: eventId, event })
 
-    const club = await Club.findOne({
-      $or: [
-        ...(payment.subscription ? [{ 'billing.asaasSubscriptionId': payment.subscription }] : []),
-        ...(payment.customer ? [{ 'billing.asaasCustomerId': payment.customer }] : []),
-        ...(payment.externalReference ? [{ id: payment.externalReference }] : []),
-      ],
-    })
+    const clubFilters = [
+      ...(payment.subscription ? [{ 'billing.asaasSubscriptionId': payment.subscription }] : []),
+      ...(payment.customer ? [{ 'billing.asaasCustomerId': payment.customer }] : []),
+      ...(payment.externalReference ? [{ id: payment.externalReference }] : []),
+    ]
+    const club = clubFilters.length ? await Club.findOne({ $or: clubFilters }) : null
 
     if (club) {
       if (['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED'].includes(event)) {
@@ -797,15 +796,22 @@ app.post('/api/webhooks/asaas', async (req, res, next) => {
               provider: 'asaas',
               paidAt,
               cycleStart: payment.dueDate ? new Date(payment.dueDate + 'T12:00:00') : paidAt,
-              cycleEnd: nextDueDateFromDay(club.billing.dueDay, addDays(paidAt, 1)),
+              cycleEnd: payment.dueDate
+                ? nextDueDateFromDay(club.billing.dueDay, addDays(new Date(payment.dueDate + 'T12:00:00'), 1))
+                : nextDueDateFromDay(club.billing.dueDay, addDays(paidAt, 1)),
             },
           },
           { upsert: true },
         )
 
+        const paidCycleDate = payment.dueDate
+          ? new Date(payment.dueDate + 'T12:00:00')
+          : paidAt
+        const renewedDueDate = nextDueDateFromDay(club.billing.dueDay, addDays(paidCycleDate, 1))
+
         club.billing.status = 'active'
         club.billing.lastPaidAt = paidAt
-        club.billing.nextDueDate = nextDueDateFromDay(club.billing.dueDay, addDays(paidAt, 1))
+        club.billing.nextDueDate = renewedDueDate
         club.billing.graceUntil = null
         club.system.status = 'active'
         club.system.temporaryUnlockUntil = null
