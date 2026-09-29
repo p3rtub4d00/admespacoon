@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Activity,
   BadgeDollarSign,
+  BellRing,
   Building2,
   CheckCircle2,
   Clock3,
@@ -41,6 +42,13 @@ const dateTimeBR = (value) => {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return 'Nunca'
   return date.toLocaleString('pt-BR')
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const rawData = window.atob(base64)
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)))
 }
 
 const statusLabel = {
@@ -262,6 +270,10 @@ export default function App() {
   const [modalClub, setModalClub] = useState(undefined)
   const [licenseData, setLicenseData] = useState(null)
   const [detailClubId, setDetailClubId] = useState(null)
+  const [pushStatus, setPushStatus] = useState(null)
+  const [pushSubscription, setPushSubscription] = useState(null)
+  const [pushBusy, setPushBusy] = useState(false)
+  const [pushMessage, setPushMessage] = useState('')
 
   const loadAll = async () => {
     setLoading(true)
@@ -324,6 +336,7 @@ export default function App() {
     ['clubs', 'Clientes', Building2],
     ['billing', 'Cobranças', WalletCards],
     ['settings', 'Configurações', Settings],
+    ['notifications', 'Notificações', BellRing],
     ['logs', 'Logs', FileClock],
   ]
 
@@ -426,6 +439,19 @@ export default function App() {
           />
         )}
 
+        {active === 'notifications' && (
+          <MasterNotifications
+            pushStatus={pushStatus}
+            setPushStatus={setPushStatus}
+            pushSubscription={pushSubscription}
+            setPushSubscription={setPushSubscription}
+            busy={pushBusy}
+            setBusy={setPushBusy}
+            message={pushMessage}
+            setMessage={setPushMessage}
+          />
+        )}
+
         {active === 'logs' && (
           <section className="content-card">
             <div className="card-head"><div><span>Auditoria</span><h2>Atividades administrativas</h2></div></div>
@@ -473,6 +499,161 @@ export default function App() {
         />
       )}
     </div>
+  )
+}
+
+function MasterNotifications({
+  pushStatus,
+  setPushStatus,
+  pushSubscription,
+  setPushSubscription,
+  busy,
+  setBusy,
+  message,
+  setMessage,
+}) {
+  const loadStatus = async () => {
+    const status = await api.pushStatus()
+    setPushStatus(status)
+
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      const registration = await navigator.serviceWorker.ready
+      setPushSubscription(await registration.pushManager.getSubscription())
+    }
+  }
+
+  useEffect(() => {
+    let alive = true
+
+    const run = async () => {
+      try {
+        const status = await api.pushStatus()
+        if (!alive) return
+        setPushStatus(status)
+
+        if ('serviceWorker' in navigator && 'PushManager' in window) {
+          const registration = await navigator.serviceWorker.ready
+          const subscription = await registration.pushManager.getSubscription()
+          if (alive) setPushSubscription(subscription)
+        }
+      } catch (error) {
+        if (alive) setMessage(error.message || 'Não foi possível carregar as notificações.')
+      }
+    }
+
+    run()
+    return () => { alive = false }
+  }, [])
+
+  const enable = async () => {
+    setBusy(true)
+    setMessage('')
+    try {
+      if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+        throw new Error('Este navegador não oferece suporte a notificações Push.')
+      }
+
+      const permission = await Notification.requestPermission()
+      if (permission !== 'granted') throw new Error('A permissão de notificações não foi autorizada.')
+
+      const registration = await navigator.serviceWorker.ready
+      let subscription = await registration.pushManager.getSubscription()
+
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(pushStatus.publicKey),
+        })
+      }
+
+      await api.subscribePush(subscription.toJSON())
+      setPushSubscription(subscription)
+      await loadStatus()
+      setMessage('Notificações ativadas neste dispositivo.')
+    } catch (error) {
+      setMessage(error.message || 'Não foi possível ativar as notificações.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="content-card">
+      <div className="card-head">
+        <div><span>Web Push</span><h2>Notificações do Master</h2></div>
+      </div>
+
+      <div className="master-notifications-layout">
+        <article className="master-notification-status">
+          <div className="notification-icon"><BellRing /></div>
+          <div>
+            <span>Este dispositivo</span>
+            <strong>{pushSubscription ? 'Notificações ativas' : 'Notificações desativadas'}</strong>
+            <small>{pushStatus?.subscriptions || 0} dispositivo(s) cadastrado(s) no Master</small>
+          </div>
+        </article>
+
+        <div className="master-notification-events">
+          <strong>Eventos automáticos</strong>
+          <span>Pagamento de mensalidade confirmado</span>
+          <span>Mensalidade vencida</span>
+          <span>Suspensão automática</span>
+          <span>Assinatura Asaas criada ou com falha</span>
+        </div>
+      </div>
+
+      <div className="master-notification-actions">
+        {!pushSubscription ? (
+          <button onClick={enable} disabled={busy || !pushStatus?.publicKey}>
+            <BellRing size={16} />
+            {busy ? 'Ativando...' : 'Ativar neste dispositivo'}
+          </button>
+        ) : (
+          <>
+            <button disabled={busy} onClick={async () => {
+              setBusy(true); setMessage('')
+              try {
+                await api.testPush(pushSubscription.endpoint)
+                setMessage('Notificação de teste enviada.')
+              } catch (error) {
+                setMessage(error.message)
+              } finally { setBusy(false) }
+            }}>
+              <BellRing size={16} /> Enviar teste
+            </button>
+
+            <button disabled={busy} onClick={async () => {
+              setBusy(true); setMessage('')
+              try {
+                await api.testPushBackground(pushSubscription.endpoint)
+                setMessage('Teste agendado. Feche o navegador/app e aguarde 15 segundos.')
+              } catch (error) {
+                setMessage(error.message)
+              } finally { setBusy(false) }
+            }}>
+              <BellRing size={16} /> Testar em segundo plano
+            </button>
+
+            <button className="danger-outline" disabled={busy} onClick={async () => {
+              setBusy(true); setMessage('')
+              try {
+                await api.unsubscribePush(pushSubscription.endpoint)
+                await pushSubscription.unsubscribe()
+                setPushSubscription(null)
+                await loadStatus()
+                setMessage('Notificações removidas deste dispositivo.')
+              } catch (error) {
+                setMessage(error.message)
+              } finally { setBusy(false) }
+            }}>
+              Desativar
+            </button>
+          </>
+        )}
+      </div>
+
+      {message && <div className="notice notification-notice">{message}</div>}
+    </section>
   )
 }
 
