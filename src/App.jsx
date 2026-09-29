@@ -117,6 +117,7 @@ function ClubModal({ club, onClose, onSaved }) {
   const [form, setForm] = useState({
     establishmentName: club?.establishmentName || '',
     ownerName: club?.ownerName || '',
+    cpfCnpj: club?.cpfCnpj || '',
     phone: club?.phone || '',
     email: club?.email || '',
     city: club?.city || '',
@@ -165,6 +166,10 @@ function ClubModal({ club, onClose, onSaved }) {
           <label>Responsável
             <input required minLength={3} value={form.ownerName}
               onChange={(e) => setForm({ ...form, ownerName: e.target.value })} />
+          </label>
+          <label>CPF/CNPJ
+            <input inputMode="numeric" value={form.cpfCnpj}
+              onChange={(e) => setForm({ ...form, cpfCnpj: e.target.value.replace(/\D/g, '').slice(0, 14) })} />
           </label>
           <label>WhatsApp
             <input required inputMode="tel" value={form.phone}
@@ -496,7 +501,7 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
               <article>
                 <span>Responsável</span>
                 <strong>{club.ownerName}</strong>
-                <small>{club.phone}{club.email ? ' • ' + club.email : ''}</small>
+                <small>{club.phone}{club.cpfCnpj ? ' • Doc. ' + club.cpfCnpj : ''}{club.email ? ' • ' + club.email : ''}</small>
               </article>
               <article>
                 <span>Plano</span>
