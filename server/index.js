@@ -141,6 +141,32 @@ const webhookEventSchema = new mongoose.Schema({
 
 const WebhookEvent = mongoose.model('MasterWebhookEvent', webhookEventSchema)
 
+const masterSettingsSchema = new mongoose.Schema({
+  key: { type: String, required: true, unique: true, default: 'main' },
+  planName: { type: String, default: 'EspaçoOn' },
+  planPrice: { type: Number, default: 49.9 },
+}, { timestamps: true })
+
+const MasterSettings = mongoose.model('MasterSettings', masterSettingsSchema)
+
+async function getMasterSettings() {
+  let settings = await MasterSettings.findOne({ key: 'main' })
+  if (!settings) {
+    settings = await MasterSettings.create({
+      key: 'main',
+      planName: 'EspaçoOn',
+      planPrice: 49.9,
+    })
+  }
+  return settings
+}
+
+async function currentPlanPrice() {
+  const settings = await getMasterSettings()
+  return Number(settings.planPrice || 49.9)
+}
+
+
 function onlyDigits(value = '') {
   return String(value).replace(/\D/g, '')
 }
@@ -242,6 +268,7 @@ async function ensureAsaasSubscription(club) {
   if (club.billing?.asaasSubscriptionId) return club.billing.asaasSubscriptionId
 
   const customerId = await ensureAsaasCustomer(club)
+  const planPrice = await currentPlanPrice()
   const now = new Date()
   const configuredDueDate = club.billing?.nextDueDate ? new Date(club.billing.nextDueDate) : now
   const dueDate = configuredDueDate < now ? now : configuredDueDate
@@ -253,7 +280,7 @@ async function ensureAsaasSubscription(club) {
       customer: customerId,
       billingType: 'PIX',
       nextDueDate,
-      value: 49.9,
+      value: planPrice,
       cycle: 'MONTHLY',
       description: 'Assinatura mensal EspaçoOn',
       externalReference: club.id,
@@ -290,9 +317,10 @@ async function getCurrentSubscriptionPayment(club) {
 async function getPixForClub(club) {
   const payment = await getCurrentSubscriptionPayment(club)
   const qr = await asaasRequest('/payments/' + encodeURIComponent(payment.id) + '/pixQrCode')
+  const planPrice = await currentPlanPrice()
 
   return {
-    amount: Number(payment.value || 49.9),
+    amount: Number(payment.value || planPrice),
     dueDate: payment.dueDate || club.billing?.nextDueDate,
     paymentId: payment.id,
     status: payment.status,
@@ -480,9 +508,92 @@ app.post('/api/master/logout', (_req, res) => {
   res.json({ ok: true })
 })
 
+app.get('/api/master/settings', requireMaster, async (_req, res, next) => {
+  try {
+    const settings = await getMasterSettings()
+    res.json({
+      planName: settings.planName || 'EspaçoOn',
+      planPrice: Number(settings.planPrice || 49.9),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/master/settings', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const planPrice = Number(req.body?.planPrice)
+    if (!Number.isFinite(planPrice) || planPrice < 5 || planPrice > 10000) {
+      return res.status(400).json({ error: 'O valor do plano deve ser de no mínimo R$ 5,00.' })
+    }
+
+    const roundedPrice = Math.round(planPrice * 100) / 100
+    const planName = text(req.body?.planName || 'EspaçoOn', 80) || 'EspaçoOn'
+
+    const clubs = await Club.find()
+    const syncFailures = []
+
+    for (const club of clubs) {
+      if (ASAAS_API_KEY && club.billing?.asaasSubscriptionId) {
+        try {
+          await asaasRequest('/subscriptions/' + encodeURIComponent(club.billing.asaasSubscriptionId), {
+            method: 'PUT',
+            body: {
+              value: roundedPrice,
+              updatePendingPayments: true,
+            },
+          })
+        } catch (syncError) {
+          syncFailures.push({
+            clubId: club.id,
+            clubName: club.establishmentName,
+            error: syncError?.message || 'Falha ao atualizar assinatura.',
+          })
+        }
+      }
+    }
+
+    if (syncFailures.length) {
+      return res.status(409).json({
+        error: 'Não foi possível atualizar todas as assinaturas no Asaas. Nenhuma alteração local foi aplicada.',
+        syncFailures,
+      })
+    }
+
+    const settings = await MasterSettings.findOneAndUpdate(
+      { key: 'main' },
+      { $set: { planName, planPrice: roundedPrice }, $setOnInsert: { key: 'main' } },
+      { upsert: true, new: true },
+    )
+
+    await Club.updateMany(
+      {},
+      { $set: { 'plan.name': planName, 'plan.price': roundedPrice } },
+    )
+
+    await logAction(
+      'settings.plan_updated',
+      'Valor do plano mensal atualizado para R$ ' + roundedPrice.toFixed(2).replace('.', ',') + '.',
+      null,
+      { planPrice: roundedPrice, planName },
+    )
+
+    res.json({
+      planName: settings.planName,
+      planPrice: Number(settings.planPrice),
+      syncedSubscriptions: clubs.filter((club) => club.billing?.asaasSubscriptionId).length,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.get('/api/master/dashboard', requireMaster, async (_req, res, next) => {
   try {
-    const clubs = await Club.find()
+    const [clubs, masterSettings] = await Promise.all([
+      Club.find(),
+      getMasterSettings(),
+    ])
     for (const club of clubs) await refreshClubStatus(club)
 
     const now = new Date()
@@ -497,8 +608,10 @@ app.get('/api/master/dashboard', requireMaster, async (_req, res, next) => {
       activeClubs: active.length,
       pastDueClubs: pastDue.length,
       suspendedClubs: clubs.filter((c) => c.system.status === 'suspended').length,
-      mrr: active.reduce((sum, club) => sum + Number(club.plan?.price || 49.9), 0),
+      mrr: active.reduce((sum, club) => sum + Number(club.plan?.price || masterSettings.planPrice || 49.9), 0),
       receivedThisMonth: payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
+      planPrice: Number(masterSettings.planPrice || 49.9),
+      planName: masterSettings.planName || 'EspaçoOn',
     })
   } catch (error) {
     next(error)
@@ -530,6 +643,47 @@ app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) =
     const paidPayments = payments.filter((item) => item.status === 'paid')
     const totalPaid = paidPayments.reduce((sum, item) => sum + Number(item.amount || 0), 0)
 
+    let asaas = {
+      configured: Boolean(ASAAS_API_KEY),
+      customerId: club.billing?.asaasCustomerId || null,
+      subscriptionId: club.billing?.asaasSubscriptionId || null,
+      subscriptionStatus: null,
+      currentPayment: null,
+      error: null,
+    }
+
+    if (ASAAS_API_KEY && club.billing?.asaasSubscriptionId) {
+      try {
+        const [subscription, subscriptionPayments] = await Promise.all([
+          asaasRequest('/subscriptions/' + encodeURIComponent(club.billing.asaasSubscriptionId)),
+          asaasRequest('/subscriptions/' + encodeURIComponent(club.billing.asaasSubscriptionId) + '/payments'),
+        ])
+
+        const remotePayments = Array.isArray(subscriptionPayments?.data) ? subscriptionPayments.data : []
+        const currentPayment = remotePayments
+          .slice()
+          .sort((a, b) => String(b.dueDate || '').localeCompare(String(a.dueDate || '')))[0] || null
+
+        asaas = {
+          ...asaas,
+          subscriptionStatus: subscription?.status || null,
+          value: Number(subscription?.value || club.plan?.price || 0),
+          billingType: subscription?.billingType || 'PIX',
+          nextDueDate: subscription?.nextDueDate || club.billing?.nextDueDate || null,
+          currentPayment: currentPayment
+            ? {
+                id: currentPayment.id,
+                value: Number(currentPayment.value || 0),
+                status: currentPayment.status,
+                dueDate: currentPayment.dueDate,
+              }
+            : null,
+        }
+      } catch (asaasError) {
+        asaas.error = asaasError?.message || 'Não foi possível consultar a assinatura no Asaas.'
+      }
+    }
+
     res.json({
       club: publicClub(club),
       financial: {
@@ -537,6 +691,7 @@ app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) =
         totalPaid,
         lastPayment: paidPayments[0] || null,
       },
+      asaas,
       payments,
       logs,
     })
@@ -548,6 +703,7 @@ app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) =
 app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next) => {
   try {
     const input = validateClubInput(req.body)
+    const masterSettings = await getMasterSettings()
     const licenseKey = generateLicenseKey()
     const id = randomId('CLB')
 
@@ -564,7 +720,10 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
       email: input.email || '',
       city: input.city || '',
       state: input.state || '',
-      plan: { name: 'EspaçoOn', price: 49.9 },
+      plan: {
+        name: masterSettings.planName || 'EspaçoOn',
+        price: Number(masterSettings.planPrice || 49.9),
+      },
       billing: {
         dueDay: input.dueDay,
         nextDueDate: nextDueDateFromDay(input.dueDay),
@@ -678,7 +837,8 @@ app.post('/api/master/clubs/:id/mark-paid', requireMaster, writeLimiter, async (
     const club = await Club.findOne({ id: req.params.id })
     if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
 
-    const amount = Number(req.body?.paidAmount)
+    const fallbackPlanPrice = await currentPlanPrice()
+    const amount = req.body?.paidAmount == null ? fallbackPlanPrice : Number(req.body.paidAmount)
     if (!Number.isFinite(amount) || amount <= 0 || amount > 10000) {
       return res.status(400).json({ error: 'Valor de pagamento inválido.' })
     }
@@ -732,8 +892,9 @@ app.post('/api/master/clubs/:id/rotate-license', requireMaster, writeLimiter, as
 app.get('/api/license/billing', authenticateClubLicense, async (req, res, next) => {
   try {
     const club = await refreshClubStatus(req.club)
+    const planPrice = await currentPlanPrice()
     res.json({
-      amount: 49.9,
+      amount: planPrice,
       billingStatus: club.billing.status,
       nextDueDate: club.billing.nextDueDate,
       canGeneratePix: Boolean(club.cpfCnpj),
@@ -781,7 +942,7 @@ app.post('/api/webhooks/asaas', async (req, res, next) => {
 
     if (club) {
       if (['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED'].includes(event)) {
-        const amount = Number(payment.value || 49.9)
+        const amount = Number(payment.value || await currentPlanPrice())
         const paidAt = new Date()
         const paymentRecordId = 'ASAAS-' + String(payment.id || eventId)
 
