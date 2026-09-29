@@ -575,6 +575,16 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
     })
 
     await logAction('club.created', 'Novo cliente cadastrado no EspaçoOn Master.', club)
+
+    if (ASAAS_API_KEY && club.cpfCnpj) {
+      try {
+        await ensureAsaasSubscription(club)
+      } catch (billingError) {
+        console.warn('Cliente criado, mas a assinatura Asaas não pôde ser criada:', billingError?.message || billingError)
+        await logAction('billing.subscription_setup_failed', 'Cadastro criado, mas a assinatura Asaas precisa ser revisada.', club)
+      }
+    }
+
     res.status(201).json({ club: publicClub(club), licenseKey })
   } catch (error) {
     next(error)
@@ -598,6 +608,16 @@ app.patch('/api/master/clubs/:id', requireMaster, writeLimiter, async (req, res,
 
     await club.save()
     await logAction('club.updated', 'Cadastro do cliente atualizado.', club)
+
+    if (ASAAS_API_KEY && club.cpfCnpj && !club.billing?.asaasSubscriptionId) {
+      try {
+        await ensureAsaasSubscription(club)
+      } catch (billingError) {
+        console.warn('Cadastro atualizado, mas a assinatura Asaas não pôde ser criada:', billingError?.message || billingError)
+        await logAction('billing.subscription_setup_failed', 'Cadastro atualizado, mas a assinatura Asaas precisa ser revisada.', club)
+      }
+    }
+
     res.json(publicClub(club))
   } catch (error) {
     next(error)
