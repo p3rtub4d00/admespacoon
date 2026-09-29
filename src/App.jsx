@@ -17,6 +17,7 @@ import {
   Plus,
   RefreshCcw,
   Search,
+  Settings,
   ShieldCheck,
   UnlockKeyhole,
   Users,
@@ -252,6 +253,7 @@ export default function App() {
   const [active, setActive] = useState('dashboard')
   const [mobileOpen, setMobileOpen] = useState(false)
   const [dashboard, setDashboard] = useState(null)
+  const [masterSettings, setMasterSettings] = useState({ planName: 'EspaçoOn', planPrice: 49.9 })
   const [clubs, setClubs] = useState([])
   const [logs, setLogs] = useState([])
   const [loading, setLoading] = useState(false)
@@ -265,12 +267,14 @@ export default function App() {
     setLoading(true)
     setMessage('')
     try {
-      const [dash, clubList, logList] = await Promise.all([
+      const [dash, settingsData, clubList, logList] = await Promise.all([
         api.dashboard(),
+        api.settings(),
         api.clubs(),
         api.logs(),
       ])
       setDashboard(dash)
+      setMasterSettings(settingsData)
       setClubs(clubList)
       setLogs(logList)
     } catch (err) {
@@ -319,6 +323,7 @@ export default function App() {
     ['dashboard', 'Visão geral', LayoutDashboard],
     ['clubs', 'Clientes', Building2],
     ['billing', 'Cobranças', WalletCards],
+    ['settings', 'Configurações', Settings],
     ['logs', 'Logs', FileClock],
   ]
 
@@ -344,7 +349,7 @@ export default function App() {
 
         <div className="sidebar-plan">
           <span>Plano comercial</span>
-          <strong>R$ 49,90/mês</strong>
+          <strong>{money(masterSettings.planPrice)}/mês</strong>
           <small>Mensalidade fixa por clube</small>
         </div>
 
@@ -402,12 +407,23 @@ export default function App() {
               <div><span>Financeiro</span><h2>Mensalidades</h2></div>
             </div>
             <div className="billing-summary">
-              <article><span>Plano</span><strong>R$ 49,90</strong><small>por cliente / mês</small></article>
+              <article><span>Plano</span><strong>{money(masterSettings.planPrice)}</strong><small>por cliente / mês</small></article>
               <article><span>Recebido no mês</span><strong>{money(dashboard?.receivedThisMonth)}</strong><small>pagamentos registrados</small></article>
               <article><span>Em atraso</span><strong>{dashboard?.pastDueClubs ?? 0}</strong><small>clientes</small></article>
             </div>
             <ClubTable clubs={clubs} setModalClub={setModalClub} act={act} setLicenseData={setLicenseData} setDetailClubId={setDetailClubId} billingOnly />
           </section>
+        )}
+
+        {active === 'settings' && (
+          <PlanSettings
+            settings={masterSettings}
+            onSaved={async (saved) => {
+              setMasterSettings(saved)
+              setMessage('Valor do plano atualizado e sincronizado com o Asaas.')
+              await loadAll()
+            }}
+          />
         )}
 
         {active === 'logs' && (
@@ -455,6 +471,91 @@ export default function App() {
         />
       )}
     </div>
+  )
+}
+
+function PlanSettings({ settings, onSaved }) {
+  const [planName, setPlanName] = useState(settings.planName || 'EspaçoOn')
+  const [planPrice, setPlanPrice] = useState(String(settings.planPrice ?? 49.9).replace('.', ','))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    setPlanName(settings.planName || 'EspaçoOn')
+    setPlanPrice(String(settings.planPrice ?? 49.9).replace('.', ','))
+  }, [settings.planName, settings.planPrice])
+
+  const submit = async (event) => {
+    event.preventDefault()
+    setError('')
+
+    const numericPrice = Number(planPrice.replace(',', '.'))
+    if (!Number.isFinite(numericPrice) || numericPrice < 5) {
+      setError('Informe um valor de pelo menos R$ 5,00.')
+      return
+    }
+
+    if (!confirm(
+      'Alterar o valor do plano para ' + money(numericPrice) +
+      '? As assinaturas e cobranças pendentes no Asaas também serão atualizadas.'
+    )) return
+
+    setBusy(true)
+    try {
+      const saved = await api.saveSettings({
+        planName: planName.trim() || 'EspaçoOn',
+        planPrice: numericPrice,
+      })
+      onSaved(saved)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="content-card">
+      <div className="card-head">
+        <div><span>Comercial</span><h2>Configuração do plano</h2></div>
+      </div>
+
+      <div className="plan-settings-layout">
+        <form className="plan-settings-form" onSubmit={submit}>
+          <label>
+            Nome do plano
+            <input value={planName} maxLength={80} onChange={(e) => setPlanName(e.target.value)} />
+          </label>
+          <label>
+            Valor mensal (R$)
+            <input
+              inputMode="decimal"
+              value={planPrice}
+              onChange={(e) => setPlanPrice(e.target.value.replace(/[^0-9,.]/g, ''))}
+              placeholder="49,90"
+            />
+          </label>
+
+          {error && <div className="form-error">{error}</div>}
+
+          <button disabled={busy}>
+            {busy ? 'Sincronizando...' : 'Salvar e atualizar Asaas'}
+          </button>
+        </form>
+
+        <aside className="plan-settings-note">
+          <BadgeDollarSign />
+          <div>
+            <strong>Valor centralizado</strong>
+            <p>
+              Este valor passa a ser usado nos novos clientes, novas assinaturas, QR Codes,
+              cobranças recorrentes e indicadores do Master.
+            </p>
+            <small>Valor mínimo permitido: R$ 5,00.</small>
+          </div>
+        </aside>
+      </div>
+    </section>
   )
 }
 
@@ -546,10 +647,10 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
                 await load()
               }}><Clock3 size={15} /> Liberar 24h</button>
               <button className="money" onClick={async () => {
-                if (!confirm('Registrar pagamento de R$ 49,90 e renovar por mais um ciclo?')) return
-                await act(() => api.markPaid(club.id, 49.9), 'Pagamento registrado e sistema regularizado.')
+                if (!confirm('Registrar a mensalidade atual como paga e renovar por mais um ciclo?')) return
+                await act(() => api.markPaid(club.id), 'Pagamento registrado e sistema regularizado.')
                 await load()
-              }}><BadgeDollarSign size={15} /> Registrar R$ 49,90</button>
+              }}><BadgeDollarSign size={15} /> Registrar mensalidade</button>
               <button onClick={async () => {
                 if (!confirm('A chave atual deixará de funcionar. Gerar nova chave?')) return
                 try {
@@ -562,6 +663,43 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
                 }
               }}><RefreshCcw size={15} /> Nova licença</button>
             </div>
+
+            <section className="client-history-section">
+              <div className="detail-section-head">
+                <div><span>Asaas</span><h3>Assinatura recorrente</h3></div>
+                {data.asaas?.subscriptionStatus && (
+                  <span className={'asaas-status ' + String(data.asaas.subscriptionStatus).toLowerCase()}>
+                    {data.asaas.subscriptionStatus}
+                  </span>
+                )}
+              </div>
+
+              <div className="asaas-detail-grid">
+                <article>
+                  <span>ID da assinatura</span>
+                  <code>{data.asaas?.subscriptionId || 'Ainda não criada'}</code>
+                </article>
+                <article>
+                  <span>Valor recorrente</span>
+                  <strong>{money(data.asaas?.value ?? club.plan?.price)}</strong>
+                </article>
+                <article>
+                  <span>Próxima cobrança</span>
+                  <strong>{dateBR(data.asaas?.nextDueDate || club.billing?.nextDueDate)}</strong>
+                </article>
+                <article>
+                  <span>Cobrança atual</span>
+                  <strong>{data.asaas?.currentPayment?.status || 'Sem cobrança'}</strong>
+                  {data.asaas?.currentPayment?.value != null && (
+                    <small>{money(data.asaas.currentPayment.value)} • {dateBR(data.asaas.currentPayment.dueDate)}</small>
+                  )}
+                </article>
+              </div>
+
+              {data.asaas?.error && (
+                <div className="asaas-warning">{data.asaas.error}</div>
+              )}
+            </section>
 
             <section className="client-history-section">
               <div className="detail-section-head">
@@ -650,8 +788,8 @@ function ClubTable({ clubs, setModalClub, act, setLicenseData, setDetailClubId, 
                   }
                   {!billingOnly && <button title="Liberar por 24h" className="warning" onClick={() => act(() => api.temporaryUnlock(club.id, 24), 'Liberação temporária concedida por 24h.')}><Clock3 /></button>}
                   <button title="Registrar mensalidade paga" className="money" onClick={() => {
-                    if (confirm('Registrar pagamento de R$ 49,90 e renovar por mais um ciclo?')) {
-                      act(() => api.markPaid(club.id, 49.9), 'Pagamento registrado e sistema regularizado.')
+                    if (confirm('Registrar a mensalidade atual como paga e renovar por mais um ciclo?')) {
+                      act(() => api.markPaid(club.id), 'Pagamento registrado e sistema regularizado.')
                     }
                   }}><BadgeDollarSign /></button>
                   {!billingOnly && <button title="Gerar nova chave de licença" onClick={async () => {
