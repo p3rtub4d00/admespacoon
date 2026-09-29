@@ -242,7 +242,9 @@ async function ensureAsaasSubscription(club) {
   if (club.billing?.asaasSubscriptionId) return club.billing.asaasSubscriptionId
 
   const customerId = await ensureAsaasCustomer(club)
-  const dueDate = club.billing?.nextDueDate ? new Date(club.billing.nextDueDate) : new Date()
+  const now = new Date()
+  const configuredDueDate = club.billing?.nextDueDate ? new Date(club.billing.nextDueDate) : now
+  const dueDate = configuredDueDate < now ? now : configuredDueDate
   const nextDueDate = dueDate.toISOString().slice(0, 10)
 
   const subscription = await asaasRequest('/subscriptions', {
