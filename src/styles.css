@@ -494,3 +494,166 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
     grid-column: 2;
   }
 }
+
+
+/* Master plan settings */
+.plan-settings-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 470px) 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.plan-settings-form {
+  display: grid;
+  gap: 13px;
+}
+
+.plan-settings-form label {
+  color: #5b717d;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.plan-settings-form input {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: 0;
+  color: #294553;
+  background: #fbfdff;
+}
+
+.plan-settings-form input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(31,142,250,.08);
+}
+
+.plan-settings-form button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 10px;
+  color: #fff;
+  background: var(--blue);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.plan-settings-note {
+  padding: 17px;
+  display: flex;
+  gap: 12px;
+  border: 1px solid #d6e8f5;
+  border-radius: 14px;
+  color: #315b79;
+  background: #f5fbff;
+}
+
+.plan-settings-note > svg {
+  flex: 0 0 auto;
+  color: var(--blue);
+}
+
+.plan-settings-note strong,
+.plan-settings-note p,
+.plan-settings-note small {
+  display: block;
+}
+
+.plan-settings-note strong {
+  font-size: 11px;
+}
+
+.plan-settings-note p {
+  margin: 5px 0;
+  color: #68808f;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.plan-settings-note small {
+  color: #8a9aa3;
+  font-size: 8px;
+}
+
+.asaas-detail-grid {
+  display: grid;
+  grid-template-columns: 1.4fr .8fr .9fr 1fr;
+  gap: 9px;
+}
+
+.asaas-detail-grid article {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: #fafcfd;
+}
+
+.asaas-detail-grid span,
+.asaas-detail-grid strong,
+.asaas-detail-grid code,
+.asaas-detail-grid small {
+  display: block;
+}
+
+.asaas-detail-grid span {
+  color: #7f929e;
+  font-size: 7px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.asaas-detail-grid strong,
+.asaas-detail-grid code {
+  margin-top: 5px;
+  color: #31566d;
+  font-size: 9px;
+  word-break: break-word;
+}
+
+.asaas-detail-grid small {
+  margin-top: 4px;
+  color: #81939d;
+  font-size: 7px;
+}
+
+.asaas-status {
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #14825a;
+  background: #e9f8f1;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.asaas-status.inactive {
+  color: #b44842;
+  background: #fff0ee;
+}
+
+.asaas-warning {
+  margin-top: 9px;
+  padding: 9px 11px;
+  border: 1px solid #f0d8a8;
+  border-radius: 9px;
+  color: #946719;
+  background: #fff9ed;
+  font-size: 8px;
+}
+
+@media (max-width: 800px) {
+  .plan-settings-layout,
+  .asaas-detail-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .plan-settings-layout,
+  .asaas-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
