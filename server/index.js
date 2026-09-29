@@ -17,6 +17,12 @@ const PORT = process.env.PORT || 10000
 const MONGODB_URI = process.env.MONGODB_URI
 const MASTER_PASSWORD = process.env.MASTER_PASSWORD
 const JWT_SECRET = process.env.JWT_SECRET
+const ASAAS_API_KEY = String(process.env.ASAAS_API_KEY || '').trim()
+const ASAAS_ENV = String(process.env.ASAAS_ENV || 'production').toLowerCase()
+const ASAAS_WEBHOOK_TOKEN = String(process.env.ASAAS_WEBHOOK_TOKEN || '').trim()
+const ASAAS_BASE_URL = ASAAS_ENV === 'sandbox'
+  ? 'https://api-sandbox.asaas.com/v3'
+  : 'https://api.asaas.com/v3'
 
 app.set('trust proxy', 1)
 app.use(helmet({
@@ -66,6 +72,7 @@ const clubSchema = new mongoose.Schema({
   slug: { type: String, required: true, unique: true, index: true },
   establishmentName: { type: String, required: true },
   ownerName: { type: String, required: true },
+  cpfCnpj: { type: String, default: '' },
   phone: { type: String, required: true },
   email: String,
   city: String,
@@ -85,6 +92,10 @@ const clubSchema = new mongoose.Schema({
     },
     lastPaidAt: Date,
     graceUntil: Date,
+    asaasCustomerId: String,
+    asaasSubscriptionId: String,
+    currentPaymentId: String,
+    currentPaymentDueDate: Date,
   },
   system: {
     status: {
@@ -121,6 +132,14 @@ const auditLogSchema = new mongoose.Schema({
 const Club = mongoose.model('Club', clubSchema)
 const Payment = mongoose.model('MasterPayment', paymentSchema)
 const AuditLog = mongoose.model('AuditLog', auditLogSchema)
+
+const webhookEventSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true, index: true },
+  event: String,
+  processedAt: { type: Date, default: Date.now },
+}, { timestamps: true })
+
+const WebhookEvent = mongoose.model('MasterWebhookEvent', webhookEventSchema)
 
 function onlyDigits(value = '') {
   return String(value).replace(/\D/g, '')
@@ -171,6 +190,130 @@ function nextDueDateFromDay(dueDay, from = new Date()) {
   let date = new Date(year, month, Math.min(Number(dueDay) || 10, 28), 12)
   if (date <= from) date = new Date(year, month + 1, Math.min(Number(dueDay) || 10, 28), 12)
   return date
+}
+
+async function asaasRequest(pathname, options = {}) {
+  if (!ASAAS_API_KEY) throw Object.assign(new Error('Asaas não configurado no Master.'), { statusCode: 503 })
+
+  const response = await fetch(ASAAS_BASE_URL + pathname, {
+    method: options.method || 'GET',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      access_token: ASAAS_API_KEY,
+      'user-agent': 'EspacoOn-Master/1.0',
+      ...(options.headers || {}),
+    },
+    ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+  })
+
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const message = data?.errors?.[0]?.description || data?.error || 'Erro na API do Asaas.'
+    throw Object.assign(new Error(message), { statusCode: response.status >= 500 ? 502 : 400 })
+  }
+  return data
+}
+
+async function ensureAsaasCustomer(club) {
+  if (club.billing?.asaasCustomerId) return club.billing.asaasCustomerId
+  if (!club.cpfCnpj) {
+    throw Object.assign(new Error('Cadastre o CPF/CNPJ do responsável antes de gerar a cobrança.'), { statusCode: 400 })
+  }
+
+  const customer = await asaasRequest('/customers', {
+    method: 'POST',
+    body: {
+      name: club.ownerName || club.establishmentName,
+      cpfCnpj: club.cpfCnpj,
+      mobilePhone: club.phone,
+      ...(club.email ? { email: club.email } : {}),
+      externalReference: club.id,
+      notificationDisabled: false,
+    },
+  })
+
+  club.billing.asaasCustomerId = customer.id
+  await club.save()
+  return customer.id
+}
+
+async function ensureAsaasSubscription(club) {
+  if (club.billing?.asaasSubscriptionId) return club.billing.asaasSubscriptionId
+
+  const customerId = await ensureAsaasCustomer(club)
+  const dueDate = club.billing?.nextDueDate ? new Date(club.billing.nextDueDate) : new Date()
+  const nextDueDate = dueDate.toISOString().slice(0, 10)
+
+  const subscription = await asaasRequest('/subscriptions', {
+    method: 'POST',
+    body: {
+      customer: customerId,
+      billingType: 'PIX',
+      nextDueDate,
+      value: 49.9,
+      cycle: 'MONTHLY',
+      description: 'Assinatura mensal EspaçoOn',
+      externalReference: club.id,
+    },
+  })
+
+  club.billing.asaasSubscriptionId = subscription.id
+  await club.save()
+  await logAction('billing.subscription_created', 'Assinatura mensal criada no Asaas.', club, { subscriptionId: subscription.id })
+  return subscription.id
+}
+
+async function getCurrentSubscriptionPayment(club) {
+  const subscriptionId = await ensureAsaasSubscription(club)
+  const list = await asaasRequest('/subscriptions/' + encodeURIComponent(subscriptionId) + '/payments')
+  const payments = Array.isArray(list?.data) ? list.data : []
+
+  const open = payments
+    .filter((payment) => !['RECEIVED', 'CONFIRMED', 'REFUNDED', 'DELETED'].includes(payment.status))
+    .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')))[0]
+
+  const chosen = open || payments.sort((a, b) => String(b.dueDate || '').localeCompare(String(a.dueDate || '')))[0]
+  if (!chosen?.id) {
+    throw Object.assign(new Error('O Asaas ainda não gerou uma cobrança para esta assinatura.'), { statusCode: 409 })
+  }
+
+  club.billing.currentPaymentId = chosen.id
+  if (chosen.dueDate) club.billing.currentPaymentDueDate = new Date(chosen.dueDate + 'T12:00:00')
+  await club.save()
+
+  return chosen
+}
+
+async function getPixForClub(club) {
+  const payment = await getCurrentSubscriptionPayment(club)
+  const qr = await asaasRequest('/payments/' + encodeURIComponent(payment.id) + '/pixQrCode')
+
+  return {
+    amount: Number(payment.value || 49.9),
+    dueDate: payment.dueDate || club.billing?.nextDueDate,
+    paymentId: payment.id,
+    status: payment.status,
+    encodedImage: qr.encodedImage,
+    payload: qr.payload,
+    expirationDate: qr.expirationDate,
+  }
+}
+
+function authenticateClubLicense(req, res, next) {
+  Promise.resolve().then(async () => {
+    const clubId = text(req.get('x-club-id'), 60)
+    const licenseKey = text(req.get('x-license-key'), 200)
+    if (!clubId || !licenseKey) return res.status(401).json({ error: 'Credenciais de licença ausentes.' })
+
+    const club = await Club.findOne({ id: clubId })
+    if (!club || !secureEqual(club.licenseKeyHash, hashLicense(licenseKey))) {
+      return res.status(401).json({ error: 'Licença inválida.' })
+    }
+
+    req.club = club
+    next()
+  }).catch(next)
 }
 
 function signSession() {
@@ -250,6 +393,13 @@ function validateClubInput(body, partial = false) {
     if (result.ownerName.length < 3) throw Object.assign(new Error('Informe o nome do responsável.'), { statusCode: 400 })
   }
 
+  if (!partial || body.cpfCnpj !== undefined) {
+    result.cpfCnpj = onlyDigits(body.cpfCnpj).slice(0, 14)
+    if (result.cpfCnpj && ![11, 14].includes(result.cpfCnpj.length)) {
+      throw Object.assign(new Error('CPF/CNPJ inválido.'), { statusCode: 400 })
+    }
+  }
+
   if (!partial || body.phone !== undefined) {
     result.phone = onlyDigits(body.phone).slice(0, 13)
     if (result.phone.length < 10) throw Object.assign(new Error('Informe um telefone válido.'), { statusCode: 400 })
@@ -287,6 +437,7 @@ function publicClub(club) {
     slug: club.slug,
     establishmentName: club.establishmentName,
     ownerName: club.ownerName,
+    cpfCnpj: club.cpfCnpj,
     phone: club.phone,
     email: club.email,
     city: club.city,
@@ -406,6 +557,7 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
       slug,
       establishmentName: input.establishmentName,
       ownerName: input.ownerName,
+      cpfCnpj: input.cpfCnpj || '',
       phone: input.phone,
       email: input.email || '',
       city: input.city || '',
@@ -433,7 +585,7 @@ app.patch('/api/master/clubs/:id', requireMaster, writeLimiter, async (req, res,
     if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
 
     const input = validateClubInput(req.body, true)
-    for (const key of ['establishmentName', 'ownerName', 'phone', 'email', 'city', 'state']) {
+    for (const key of ['establishmentName', 'ownerName', 'cpfCnpj', 'phone', 'email', 'city', 'state']) {
       if (input[key] !== undefined) club[key] = input[key]
     }
 
@@ -550,6 +702,121 @@ app.post('/api/master/clubs/:id/rotate-license', requireMaster, writeLimiter, as
     await club.save()
     await logAction('club.license_rotated', 'Chave de licença regenerada.', club)
     res.json({ club: publicClub(club), licenseKey })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/license/billing', authenticateClubLicense, async (req, res, next) => {
+  try {
+    const club = await refreshClubStatus(req.club)
+    res.json({
+      amount: 49.9,
+      billingStatus: club.billing.status,
+      nextDueDate: club.billing.nextDueDate,
+      canGeneratePix: Boolean(club.cpfCnpj),
+      cpfCnpjConfigured: Boolean(club.cpfCnpj),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/license/billing/pix', authenticateClubLicense, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await refreshClubStatus(req.club)
+    const pix = await getPixForClub(club)
+    await logAction('billing.pix_requested', 'QR Code da mensalidade solicitado pelo sistema do clube.', club, {
+      paymentId: pix.paymentId,
+    })
+    res.json(pix)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/webhooks/asaas', async (req, res, next) => {
+  try {
+    if (!ASAAS_WEBHOOK_TOKEN || !secureEqual(req.get('asaas-access-token') || '', ASAAS_WEBHOOK_TOKEN)) {
+      return res.status(401).json({ error: 'Webhook não autorizado.' })
+    }
+
+    const eventId = text(req.body?.id, 120)
+    const event = text(req.body?.event, 80)
+    const payment = req.body?.payment || {}
+
+    if (!eventId || !event) return res.status(400).json({ error: 'Evento inválido.' })
+    if (await WebhookEvent.exists({ id: eventId })) return res.json({ received: true, duplicate: true })
+
+    await WebhookEvent.create({ id: eventId, event })
+
+    const club = await Club.findOne({
+      $or: [
+        ...(payment.subscription ? [{ 'billing.asaasSubscriptionId': payment.subscription }] : []),
+        ...(payment.customer ? [{ 'billing.asaasCustomerId': payment.customer }] : []),
+        ...(payment.externalReference ? [{ id: payment.externalReference }] : []),
+      ],
+    })
+
+    if (club) {
+      if (['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED'].includes(event)) {
+        const amount = Number(payment.value || 49.9)
+        const paidAt = new Date()
+        const paymentRecordId = 'ASAAS-' + String(payment.id || eventId)
+
+        await Payment.updateOne(
+          { id: paymentRecordId },
+          {
+            $setOnInsert: {
+              id: paymentRecordId,
+              clubId: club.id,
+              amount,
+              status: 'paid',
+              provider: 'asaas',
+              paidAt,
+              cycleStart: payment.dueDate ? new Date(payment.dueDate + 'T12:00:00') : paidAt,
+              cycleEnd: nextDueDateFromDay(club.billing.dueDay, addDays(paidAt, 1)),
+            },
+          },
+          { upsert: true },
+        )
+
+        club.billing.status = 'active'
+        club.billing.lastPaidAt = paidAt
+        club.billing.nextDueDate = nextDueDateFromDay(club.billing.dueDay, addDays(paidAt, 1))
+        club.billing.graceUntil = null
+        club.system.status = 'active'
+        club.system.temporaryUnlockUntil = null
+        club.billing.currentPaymentId = payment.id || club.billing.currentPaymentId
+        await club.save()
+
+        await logAction('billing.payment_confirmed', 'Pagamento Asaas confirmado e sistema liberado automaticamente.', club, {
+          paymentId: payment.id,
+          event,
+          amount,
+        })
+      }
+
+      if (event === 'PAYMENT_OVERDUE') {
+        club.billing.status = 'past_due'
+        if (payment.dueDate) club.billing.nextDueDate = new Date(payment.dueDate + 'T12:00:00')
+        await club.save()
+        await logAction('billing.payment_overdue', 'Mensalidade marcada como vencida pelo Asaas.', club, {
+          paymentId: payment.id,
+        })
+      }
+
+      if (['PAYMENT_REFUNDED', 'PAYMENT_DELETED'].includes(event)) {
+        club.billing.status = 'past_due'
+        await club.save()
+        await logAction('billing.payment_reversed', 'Pagamento Asaas revertido ou removido.', club, {
+          paymentId: payment.id,
+          event,
+        })
+      }
+    }
+
+    res.json({ received: true })
   } catch (error) {
     next(error)
   }
