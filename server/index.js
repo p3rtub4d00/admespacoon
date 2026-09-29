@@ -362,6 +362,36 @@ app.get('/api/master/clubs', requireMaster, async (_req, res, next) => {
   }
 })
 
+app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    await refreshClubStatus(club)
+
+    const [payments, logs] = await Promise.all([
+      Payment.find({ clubId: club.id }).sort({ paidAt: -1, createdAt: -1 }).limit(100).lean(),
+      AuditLog.find({ clubId: club.id }).sort({ createdAt: -1 }).limit(100).lean(),
+    ])
+
+    const paidPayments = payments.filter((item) => item.status === 'paid')
+    const totalPaid = paidPayments.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+
+    res.json({
+      club: publicClub(club),
+      financial: {
+        paymentsCount: paidPayments.length,
+        totalPaid,
+        lastPayment: paidPayments[0] || null,
+      },
+      payments,
+      logs,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next) => {
   try {
     const input = validateClubInput(req.body)
