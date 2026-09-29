@@ -63,5 +63,26 @@ export const api = {
     request('/api/master/clubs/' + encodeURIComponent(id) + '/rotate-license', {
       method: 'POST',
     }),
+  pushStatus: () => request('/api/master/push/status'),
+  subscribePush: (subscription) =>
+    request('/api/master/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({ subscription }),
+    }),
+  unsubscribePush: (endpoint) =>
+    request('/api/master/push/subscribe', {
+      method: 'DELETE',
+      body: JSON.stringify({ endpoint }),
+    }),
+  testPush: (endpoint) =>
+    request('/api/master/push/test', {
+      method: 'POST',
+      body: JSON.stringify({ endpoint }),
+    }),
+  testPushBackground: (endpoint) =>
+    request('/api/master/push/test-background', {
+      method: 'POST',
+      body: JSON.stringify({ endpoint }),
+    }),
   logs: () => request('/api/master/logs'),
 }
