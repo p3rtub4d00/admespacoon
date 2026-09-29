@@ -1,0 +1,631 @@
+import express from 'express'
+import mongoose from 'mongoose'
+import cookieParser from 'cookie-parser'
+import jwt from 'jsonwebtoken'
+import helmet from 'helmet'
+import { rateLimit } from 'express-rate-limit'
+import crypto from 'crypto'
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const rootDir = path.resolve(__dirname, '..')
+
+const app = express()
+const PORT = process.env.PORT || 10000
+const MONGODB_URI = process.env.MONGODB_URI
+const MASTER_PASSWORD = process.env.MASTER_PASSWORD
+const JWT_SECRET = process.env.JWT_SECRET
+
+app.set('trust proxy', 1)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      connectSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    },
+  },
+}))
+app.use(express.json({ limit: '1mb' }))
+app.use(cookieParser())
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 8,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Muitas tentativas de acesso. Aguarde alguns minutos.' },
+})
+
+const writeLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 60,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Muitas alterações em pouco tempo. Aguarde alguns instantes.' },
+})
+
+const publicLicenseLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Muitas consultas de licença.' },
+})
+
+const clubSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true, index: true },
+  slug: { type: String, required: true, unique: true, index: true },
+  establishmentName: { type: String, required: true },
+  ownerName: { type: String, required: true },
+  phone: { type: String, required: true },
+  email: String,
+  city: String,
+  state: String,
+  plan: {
+    name: { type: String, default: 'EspaçoOn' },
+    price: { type: Number, default: 49.9 },
+  },
+  billing: {
+    dueDay: { type: Number, default: 10 },
+    nextDueDate: Date,
+    status: {
+      type: String,
+      enum: ['trial', 'active', 'past_due', 'suspended', 'cancelled'],
+      default: 'active',
+      index: true,
+    },
+    lastPaidAt: Date,
+    graceUntil: Date,
+  },
+  system: {
+    status: {
+      type: String,
+      enum: ['active', 'suspended', 'cancelled'],
+      default: 'active',
+      index: true,
+    },
+    lastSeen: Date,
+    temporaryUnlockUntil: Date,
+  },
+  licenseKeyHash: { type: String, required: true },
+}, { timestamps: true })
+
+const paymentSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true, index: true },
+  clubId: { type: String, required: true, index: true },
+  amount: { type: Number, required: true },
+  status: { type: String, enum: ['paid', 'pending', 'cancelled'], default: 'paid' },
+  provider: { type: String, default: 'manual' },
+  paidAt: Date,
+  cycleStart: Date,
+  cycleEnd: Date,
+}, { timestamps: true })
+
+const auditLogSchema = new mongoose.Schema({
+  action: { type: String, required: true, index: true },
+  description: { type: String, required: true },
+  clubId: { type: String, index: true },
+  clubName: String,
+  metadata: mongoose.Schema.Types.Mixed,
+}, { timestamps: true })
+
+const Club = mongoose.model('Club', clubSchema)
+const Payment = mongoose.model('MasterPayment', paymentSchema)
+const AuditLog = mongoose.model('AuditLog', auditLogSchema)
+
+function onlyDigits(value = '') {
+  return String(value).replace(/\D/g, '')
+}
+
+function text(value, max = 160) {
+  return String(value ?? '').trim().slice(0, max)
+}
+
+function secureEqual(a = '', b = '') {
+  const aa = Buffer.from(String(a))
+  const bb = Buffer.from(String(b))
+  if (aa.length !== bb.length) return false
+  return crypto.timingSafeEqual(aa, bb)
+}
+
+function randomId(prefix) {
+  return prefix + '-' + crypto.randomBytes(5).toString('hex').toUpperCase()
+}
+
+function slugify(value) {
+  return text(value, 120)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60)
+}
+
+function hashLicense(key) {
+  return crypto.createHash('sha256').update(String(key)).digest('hex')
+}
+
+function generateLicenseKey() {
+  return crypto.randomBytes(32).toString('base64url')
+}
+
+function addDays(date, days) {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+function nextDueDateFromDay(dueDay, from = new Date()) {
+  const year = from.getFullYear()
+  const month = from.getMonth()
+  let date = new Date(year, month, Math.min(Number(dueDay) || 10, 28), 12)
+  if (date <= from) date = new Date(year, month + 1, Math.min(Number(dueDay) || 10, 28), 12)
+  return date
+}
+
+function signSession() {
+  return jwt.sign({ role: 'master' }, JWT_SECRET, { expiresIn: '12h' })
+}
+
+function requireMaster(req, res, next) {
+  try {
+    const token = req.cookies?.espacoon_master
+    if (!token) return res.status(401).json({ error: 'Sessão não autenticada.' })
+    const payload = jwt.verify(token, JWT_SECRET)
+    if (payload?.role !== 'master') return res.status(403).json({ error: 'Acesso negado.' })
+    next()
+  } catch {
+    res.status(401).json({ error: 'Sessão expirada.' })
+  }
+}
+
+async function logAction(action, description, club = null, metadata = null) {
+  await AuditLog.create({
+    action,
+    description,
+    clubId: club?.id,
+    clubName: club?.establishmentName,
+    metadata,
+  })
+}
+
+async function refreshClubStatus(club) {
+  if (!club || club.billing?.status === 'cancelled' || club.system?.status === 'cancelled') return club
+
+  const now = new Date()
+  const dueDate = club.billing?.nextDueDate ? new Date(club.billing.nextDueDate) : null
+  const tempUnlock = club.system?.temporaryUnlockUntil ? new Date(club.system.temporaryUnlockUntil) : null
+
+  if (tempUnlock && tempUnlock <= now) {
+    club.system.temporaryUnlockUntil = null
+  }
+
+  if (dueDate && dueDate < now && club.billing.status === 'active') {
+    club.billing.status = 'past_due'
+    club.billing.graceUntil = addDays(dueDate, 5)
+  }
+
+  if (
+    club.billing.status === 'past_due' &&
+    club.billing.graceUntil &&
+    new Date(club.billing.graceUntil) < now &&
+    !club.system.temporaryUnlockUntil
+  ) {
+    club.billing.status = 'suspended'
+    club.system.status = 'suspended'
+  }
+
+  await club.save()
+  return club
+}
+
+function effectiveAccess(club) {
+  if (!club) return false
+  if (club.system?.status === 'cancelled') return false
+  if (club.system?.status === 'active') return true
+  const unlock = club.system?.temporaryUnlockUntil
+  return Boolean(unlock && new Date(unlock) > new Date())
+}
+
+function validateClubInput(body, partial = false) {
+  const result = {}
+
+  if (!partial || body.establishmentName !== undefined) {
+    result.establishmentName = text(body.establishmentName, 120)
+    if (result.establishmentName.length < 2) throw Object.assign(new Error('Informe o nome do clube.'), { statusCode: 400 })
+  }
+
+  if (!partial || body.ownerName !== undefined) {
+    result.ownerName = text(body.ownerName, 120)
+    if (result.ownerName.length < 3) throw Object.assign(new Error('Informe o nome do responsável.'), { statusCode: 400 })
+  }
+
+  if (!partial || body.phone !== undefined) {
+    result.phone = onlyDigits(body.phone).slice(0, 13)
+    if (result.phone.length < 10) throw Object.assign(new Error('Informe um telefone válido.'), { statusCode: 400 })
+  }
+
+  if (body.email !== undefined) {
+    result.email = text(body.email, 160).toLowerCase()
+    if (result.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email)) {
+      throw Object.assign(new Error('E-mail inválido.'), { statusCode: 400 })
+    }
+  }
+
+  if (body.city !== undefined) result.city = text(body.city, 100)
+  if (body.state !== undefined) {
+    result.state = text(body.state, 2).toUpperCase()
+    if (result.state && !/^[A-Z]{2}$/.test(result.state)) {
+      throw Object.assign(new Error('UF inválida.'), { statusCode: 400 })
+    }
+  }
+
+  if (!partial || body.dueDay !== undefined) {
+    const dueDay = Number(body.dueDay || 10)
+    if (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 28) {
+      throw Object.assign(new Error('Dia de vencimento inválido.'), { statusCode: 400 })
+    }
+    result.dueDay = dueDay
+  }
+
+  return result
+}
+
+function publicClub(club) {
+  return {
+    id: club.id,
+    slug: club.slug,
+    establishmentName: club.establishmentName,
+    ownerName: club.ownerName,
+    phone: club.phone,
+    email: club.email,
+    city: club.city,
+    state: club.state,
+    plan: club.plan,
+    billing: club.billing,
+    system: club.system,
+    createdAt: club.createdAt,
+    updatedAt: club.updatedAt,
+  }
+}
+
+app.post('/api/master/login', loginLimiter, (req, res) => {
+  if (!secureEqual(req.body?.password, MASTER_PASSWORD)) {
+    return res.status(401).json({ error: 'Senha incorreta.' })
+  }
+  res.cookie('espacoon_master', signSession(), {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'strict',
+    path: '/',
+    maxAge: 12 * 60 * 60 * 1000,
+  })
+  res.json({ ok: true })
+})
+
+app.get('/api/master/session', requireMaster, (_req, res) => {
+  res.json({ authenticated: true })
+})
+
+app.post('/api/master/logout', (_req, res) => {
+  res.clearCookie('espacoon_master', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'strict',
+    path: '/',
+  })
+  res.json({ ok: true })
+})
+
+app.get('/api/master/dashboard', requireMaster, async (_req, res, next) => {
+  try {
+    const clubs = await Club.find()
+    for (const club of clubs) await refreshClubStatus(club)
+
+    const now = new Date()
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    const payments = await Payment.find({ status: 'paid', paidAt: { $gte: monthStart } }).lean()
+
+    const active = clubs.filter((c) => effectiveAccess(c) && c.system.status !== 'cancelled')
+    const pastDue = clubs.filter((c) => ['past_due', 'suspended'].includes(c.billing.status))
+
+    res.json({
+      totalClubs: clubs.length,
+      activeClubs: active.length,
+      pastDueClubs: pastDue.length,
+      suspendedClubs: clubs.filter((c) => c.system.status === 'suspended').length,
+      mrr: active.reduce((sum, club) => sum + Number(club.plan?.price || 49.9), 0),
+      receivedThisMonth: payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/master/clubs', requireMaster, async (_req, res, next) => {
+  try {
+    const clubs = await Club.find().sort({ createdAt: -1 })
+    for (const club of clubs) await refreshClubStatus(club)
+    res.json(clubs.map(publicClub))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const input = validateClubInput(req.body)
+    const licenseKey = generateLicenseKey()
+    const id = randomId('CLB')
+
+    let slug = slugify(input.establishmentName) || id.toLowerCase()
+    if (await Club.exists({ slug })) slug += '-' + crypto.randomBytes(2).toString('hex')
+
+    const club = await Club.create({
+      id,
+      slug,
+      establishmentName: input.establishmentName,
+      ownerName: input.ownerName,
+      phone: input.phone,
+      email: input.email || '',
+      city: input.city || '',
+      state: input.state || '',
+      plan: { name: 'EspaçoOn', price: 49.9 },
+      billing: {
+        dueDay: input.dueDay,
+        nextDueDate: nextDueDateFromDay(input.dueDay),
+        status: 'active',
+      },
+      system: { status: 'active' },
+      licenseKeyHash: hashLicense(licenseKey),
+    })
+
+    await logAction('club.created', 'Novo cliente cadastrado no EspaçoOn Master.', club)
+    res.status(201).json({ club: publicClub(club), licenseKey })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/master/clubs/:id', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const input = validateClubInput(req.body, true)
+    for (const key of ['establishmentName', 'ownerName', 'phone', 'email', 'city', 'state']) {
+      if (input[key] !== undefined) club[key] = input[key]
+    }
+
+    if (input.dueDay !== undefined) {
+      club.billing.dueDay = input.dueDay
+      if (!club.billing.nextDueDate) club.billing.nextDueDate = nextDueDateFromDay(input.dueDay)
+    }
+
+    await club.save()
+    await logAction('club.updated', 'Cadastro do cliente atualizado.', club)
+    res.json(publicClub(club))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/clubs/:id/status', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const status = text(req.body?.systemStatus, 20)
+    if (!['active', 'suspended', 'cancelled'].includes(status)) {
+      return res.status(400).json({ error: 'Status inválido.' })
+    }
+
+    club.system.status = status
+    if (status === 'active') {
+      club.system.temporaryUnlockUntil = null
+      if (club.billing.status === 'suspended') club.billing.status = 'past_due'
+    }
+    if (status === 'cancelled') club.billing.status = 'cancelled'
+
+    await club.save()
+    await logAction(
+      'club.status_changed',
+      status === 'active' ? 'Sistema liberado manualmente.' : status === 'suspended' ? 'Sistema bloqueado manualmente.' : 'Cliente cancelado.',
+      club,
+      { reason: text(req.body?.reason, 300) },
+    )
+    res.json(publicClub(club))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/clubs/:id/temporary-unlock', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const hours = Number(req.body?.hours || 24)
+    if (![6, 12, 24, 48].includes(hours)) {
+      return res.status(400).json({ error: 'Período de liberação inválido.' })
+    }
+
+    club.system.temporaryUnlockUntil = new Date(Date.now() + hours * 60 * 60 * 1000)
+    await club.save()
+    await logAction('club.temporary_unlock', 'Liberação temporária concedida por ' + hours + ' horas.', club)
+    res.json(publicClub(club))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/clubs/:id/mark-paid', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const amount = Number(req.body?.paidAmount)
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 10000) {
+      return res.status(400).json({ error: 'Valor de pagamento inválido.' })
+    }
+
+    const now = new Date()
+    const currentDue = club.billing.nextDueDate ? new Date(club.billing.nextDueDate) : now
+    const cycleStart = currentDue > now ? currentDue : now
+    const cycleEnd = nextDueDateFromDay(club.billing.dueDay, addDays(cycleStart, 1))
+
+    await Payment.create({
+      id: randomId('PAY'),
+      clubId: club.id,
+      amount: Math.round(amount * 100) / 100,
+      status: 'paid',
+      provider: 'manual',
+      paidAt: now,
+      cycleStart,
+      cycleEnd,
+    })
+
+    club.billing.status = 'active'
+    club.billing.lastPaidAt = now
+    club.billing.nextDueDate = cycleEnd
+    club.billing.graceUntil = null
+    club.system.status = 'active'
+    club.system.temporaryUnlockUntil = null
+    await club.save()
+
+    await logAction('billing.payment_registered', 'Mensalidade registrada como paga.', club, { amount })
+    res.json(publicClub(club))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/clubs/:id/rotate-license', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const licenseKey = generateLicenseKey()
+    club.licenseKeyHash = hashLicense(licenseKey)
+    await club.save()
+    await logAction('club.license_rotated', 'Chave de licença regenerada.', club)
+    res.json({ club: publicClub(club), licenseKey })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/master/logs', requireMaster, async (_req, res, next) => {
+  try {
+    const logs = await AuditLog.find().sort({ createdAt: -1 }).limit(200).lean()
+    res.json(logs)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/license/status', publicLicenseLimiter, async (req, res, next) => {
+  try {
+    const clubId = text(req.get('x-club-id'), 60)
+    const licenseKey = text(req.get('x-license-key'), 200)
+
+    if (!clubId || !licenseKey) {
+      return res.status(401).json({ ok: false, active: false, error: 'Credenciais ausentes.' })
+    }
+
+    const club = await Club.findOne({ id: clubId })
+    if (!club || !secureEqual(club.licenseKeyHash, hashLicense(licenseKey))) {
+      return res.status(401).json({ ok: false, active: false, error: 'Licença inválida.' })
+    }
+
+    await refreshClubStatus(club)
+    club.system.lastSeen = new Date()
+    await club.save()
+
+    res.json({
+      ok: true,
+      active: effectiveAccess(club),
+      status: club.system.status,
+      billingStatus: club.billing.status,
+      nextDueDate: club.billing.nextDueDate,
+      temporaryUnlockUntil: club.system.temporaryUnlockUntil,
+      club: {
+        id: club.id,
+        slug: club.slug,
+        establishmentName: club.establishmentName,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+  })
+})
+
+app.use((error, _req, res, _next) => {
+  console.error(error)
+  const status = Number(error?.statusCode) || 500
+  res.status(status).json({
+    error: status >= 500 ? 'Erro interno do servidor.' : error.message,
+  })
+})
+
+app.use(express.static(path.join(rootDir, 'dist')))
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(rootDir, 'dist', 'index.html'))
+})
+
+function validateConfig() {
+  const missing = []
+  if (!MONGODB_URI) missing.push('MONGODB_URI')
+  if (!MASTER_PASSWORD || MASTER_PASSWORD.length < 10) missing.push('MASTER_PASSWORD (mínimo 10 caracteres)')
+  if (!JWT_SECRET || JWT_SECRET.length < 32) missing.push('JWT_SECRET (mínimo 32 caracteres)')
+  if (missing.length) throw new Error('Configuração obrigatória ausente: ' + missing.join(', '))
+}
+
+async function start() {
+  try {
+    validateConfig()
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 10000,
+      connectTimeoutMS: 10000,
+      maxPoolSize: 10,
+    })
+    console.log('EspaçoOn Master conectado ao MongoDB.')
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log('EspaçoOn Master rodando na porta ' + PORT)
+    })
+  } catch (error) {
+    console.error('Falha ao iniciar EspaçoOn Master:', error?.message || error)
+    process.exit(1)
+  }
+}
+
+async function shutdown(signal) {
+  console.log(signal + ' recebido. Encerrando...')
+  try {
+    await mongoose.connection.close()
+  } finally {
+    process.exit(0)
+  }
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'))
+process.once('SIGINT', () => shutdown('SIGINT'))
+
+start()
