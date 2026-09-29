@@ -46,6 +46,11 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
+  setDemoMode: (id, enabled) =>
+    request('/api/master/clubs/' + encodeURIComponent(id) + '/demo-mode', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
   setClubStatus: (id, systemStatus, reason) =>
     request('/api/master/clubs/' + encodeURIComponent(id) + '/status', {
       method: 'POST',
