@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken'
 import helmet from 'helmet'
 import { rateLimit } from 'express-rate-limit'
 import crypto from 'crypto'
+import webpush from 'web-push'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -141,6 +142,28 @@ const webhookEventSchema = new mongoose.Schema({
 
 const WebhookEvent = mongoose.model('MasterWebhookEvent', webhookEventSchema)
 
+const pushConfigSchema = new mongoose.Schema({
+  key: { type: String, default: 'main', unique: true },
+  publicKey: { type: String, required: true },
+  privateKey: { type: String, required: true },
+}, { timestamps: true })
+
+const pushSubscriptionSchema = new mongoose.Schema({
+  endpoint: { type: String, required: true, unique: true, index: true },
+  keys: {
+    p256dh: { type: String, required: true },
+    auth: { type: String, required: true },
+  },
+  userAgent: String,
+  enabled: { type: Boolean, default: true },
+  lastSuccessAt: Date,
+  lastErrorAt: Date,
+}, { timestamps: true })
+
+const PushConfig = mongoose.model('MasterPushConfig', pushConfigSchema)
+const PushSubscription = mongoose.model('MasterPushSubscription', pushSubscriptionSchema)
+
+
 const masterSettingsSchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true, default: 'main' },
   planName: { type: String, default: 'EspaçoOn' },
@@ -166,6 +189,83 @@ async function currentPlanPrice() {
   return Number(settings.planPrice || 49.9)
 }
 
+
+async function ensurePushConfig() {
+  let config = await PushConfig.findOne({ key: 'main' }).lean()
+
+  if (!config) {
+    const keys = webpush.generateVAPIDKeys()
+    const created = await PushConfig.create({
+      key: 'main',
+      publicKey: keys.publicKey,
+      privateKey: keys.privateKey,
+    })
+    config = created.toObject()
+  }
+
+  webpush.setVapidDetails(
+    'mailto:admin@espacoon.app',
+    config.publicKey,
+    config.privateKey,
+  )
+
+  return config
+}
+
+async function sendPushNotification(payload, endpoint = null) {
+  await ensurePushConfig()
+
+  const query = endpoint ? { endpoint, enabled: true } : { enabled: true }
+  const subscriptions = await PushSubscription.find(query).lean()
+  let sent = 0
+  let failed = 0
+
+  for (const subscription of subscriptions) {
+    try {
+      await webpush.sendNotification(
+        {
+          endpoint: subscription.endpoint,
+          keys: subscription.keys,
+        },
+        JSON.stringify(payload),
+      )
+
+      sent += 1
+      await PushSubscription.updateOne(
+        { endpoint: subscription.endpoint },
+        {
+          $set: { lastSuccessAt: new Date(), enabled: true },
+          $unset: { lastErrorAt: 1 },
+        },
+      )
+    } catch (error) {
+      failed += 1
+      const statusCode = Number(error?.statusCode)
+
+      if (statusCode === 404 || statusCode === 410) {
+        await PushSubscription.deleteOne({ endpoint: subscription.endpoint })
+      } else {
+        await PushSubscription.updateOne(
+          { endpoint: subscription.endpoint },
+          { $set: { lastErrorAt: new Date() } },
+        )
+      }
+
+      console.warn('Falha ao enviar Web Push do Master:', statusCode || error?.message || error)
+    }
+  }
+
+  return { sent, failed }
+}
+
+function notifyMaster(payload) {
+  sendPushNotification({
+    url: '/',
+    ...payload,
+  }).catch((error) => {
+    console.warn('Falha ao disparar notificação do Master:', error?.message || error)
+  })
+}
 
 function onlyDigits(value = '') {
   return String(value).replace(/\D/g, '')
@@ -290,6 +390,11 @@ async function ensureAsaasSubscription(club) {
   club.billing.asaasSubscriptionId = subscription.id
   await club.save()
   await logAction('billing.subscription_created', 'Assinatura mensal criada no Asaas.', club, { subscriptionId: subscription.id })
+  notifyMaster({
+    title: 'Assinatura Asaas criada',
+    body: club.establishmentName + ' foi vinculado à cobrança recorrente.',
+    tag: 'master-subscription-' + club.id,
+  })
   return subscription.id
 }
 
@@ -386,6 +491,11 @@ async function refreshClubStatus(club) {
   if (dueDate && dueDate < now && club.billing.status === 'active') {
     club.billing.status = 'past_due'
     club.billing.graceUntil = addDays(dueDate, 5)
+    notifyMaster({
+      title: 'Mensalidade vencida',
+      body: club.establishmentName + ' está com a mensalidade vencida.',
+      tag: 'master-overdue-' + club.id,
+    })
   }
 
   if (
@@ -396,6 +506,11 @@ async function refreshClubStatus(club) {
   ) {
     club.billing.status = 'suspended'
     club.system.status = 'suspended'
+    notifyMaster({
+      title: 'Cliente suspenso',
+      body: club.establishmentName + ' foi suspenso automaticamente por inadimplência.',
+      tag: 'master-suspended-' + club.id,
+    })
   }
 
   await club.save()
@@ -741,6 +856,11 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
       } catch (billingError) {
         console.warn('Cliente criado, mas a assinatura Asaas não pôde ser criada:', billingError?.message || billingError)
         await logAction('billing.subscription_setup_failed', 'Cadastro criado, mas a assinatura Asaas precisa ser revisada.', club)
+        notifyMaster({
+          title: 'Falha na assinatura Asaas',
+          body: 'Revise a cobrança de ' + club.establishmentName + '.',
+          tag: 'master-billing-failure-' + club.id,
+        })
       }
     }
 
@@ -774,6 +894,11 @@ app.patch('/api/master/clubs/:id', requireMaster, writeLimiter, async (req, res,
       } catch (billingError) {
         console.warn('Cadastro atualizado, mas a assinatura Asaas não pôde ser criada:', billingError?.message || billingError)
         await logAction('billing.subscription_setup_failed', 'Cadastro atualizado, mas a assinatura Asaas precisa ser revisada.', club)
+        notifyMaster({
+          title: 'Falha na assinatura Asaas',
+          body: 'Revise a cobrança de ' + club.establishmentName + '.',
+          tag: 'master-billing-failure-' + club.id,
+        })
       }
     }
 
@@ -984,6 +1109,11 @@ app.post('/api/webhooks/asaas', async (req, res, next) => {
           event,
           amount,
         })
+        notifyMaster({
+          title: 'Mensalidade recebida',
+          body: club.establishmentName + ' pagou R$ ' + amount.toFixed(2).replace('.', ',') + '. Sistema liberado.',
+          tag: 'master-payment-' + String(payment.id || eventId),
+        })
       }
 
       if (event === 'PAYMENT_OVERDUE') {
@@ -992,6 +1122,11 @@ app.post('/api/webhooks/asaas', async (req, res, next) => {
         await club.save()
         await logAction('billing.payment_overdue', 'Mensalidade marcada como vencida pelo Asaas.', club, {
           paymentId: payment.id,
+        })
+        notifyMaster({
+          title: 'Pagamento vencido',
+          body: club.establishmentName + ' possui uma cobrança vencida no Asaas.',
+          tag: 'master-asaas-overdue-' + String(payment.id || club.id),
         })
       }
 
@@ -1006,6 +1141,100 @@ app.post('/api/webhooks/asaas', async (req, res, next) => {
     }
 
     res.json({ received: true })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/master/push/status', requireMaster, async (_req, res, next) => {
+  try {
+    const config = await ensurePushConfig()
+    const subscriptions = await PushSubscription.countDocuments({ enabled: true })
+    res.json({ supported: true, publicKey: config.publicKey, subscriptions })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/push/subscribe', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const subscription = req.body?.subscription || {}
+    const endpoint = text(subscription.endpoint, 2000)
+    const p256dh = text(subscription.keys?.p256dh, 500)
+    const auth = text(subscription.keys?.auth, 500)
+
+    if (!endpoint.startsWith('https://') || !p256dh || !auth) {
+      return res.status(400).json({ error: 'Assinatura de notificação inválida.' })
+    }
+
+    await PushSubscription.findOneAndUpdate(
+      { endpoint },
+      {
+        $set: {
+          endpoint,
+          keys: { p256dh, auth },
+          userAgent: text(req.get('user-agent'), 500),
+          enabled: true,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    )
+
+    res.json({ ok: true })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/master/push/subscribe', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const endpoint = text(req.body?.endpoint, 2000)
+    if (!endpoint) return res.status(400).json({ error: 'Dispositivo não informado.' })
+    await PushSubscription.deleteOne({ endpoint })
+    res.json({ ok: true })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/push/test', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const endpoint = text(req.body?.endpoint, 2000) || null
+    const result = await sendPushNotification({
+      title: 'EspaçoOn Master',
+      body: 'As notificações do Painel Master estão funcionando.',
+      url: '/',
+      tag: 'espacoon-master-test',
+    }, endpoint)
+
+    if (!result.sent) {
+      return res.status(404).json({ error: 'Nenhum dispositivo ativo recebeu a notificação.' })
+    }
+
+    res.json({ ok: true, ...result })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/push/test-background', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const endpoint = text(req.body?.endpoint, 2000)
+    if (!endpoint) return res.status(400).json({ error: 'Dispositivo não informado.' })
+
+    const exists = await PushSubscription.findOne({ endpoint, enabled: true }).lean()
+    if (!exists) return res.status(404).json({ error: 'Dispositivo não cadastrado.' })
+
+    res.json({ ok: true, message: 'Teste agendado para 15 segundos.' })
+
+    setTimeout(() => {
+      sendPushNotification({
+        title: 'EspaçoOn Master',
+        body: 'O Master conseguiu notificar você mesmo em segundo plano.',
+        url: '/',
+        tag: 'espacoon-master-background-' + Date.now(),
+      }, endpoint).catch(() => {})
+    }, 15000)
   } catch (error) {
     next(error)
   }
