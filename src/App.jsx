@@ -262,6 +262,13 @@ export default function App() {
   const [active, setActive] = useState('dashboard')
   const [mobileOpen, setMobileOpen] = useState(false)
   const [dashboard, setDashboard] = useState(null)
+  const [revenueMonth, setRevenueMonth] = useState(() => {
+    const now = new Date()
+    return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0')
+  })
+  const [revenueData, setRevenueData] = useState(null)
+  const [revenueLoading, setRevenueLoading] = useState(false)
+  const [revenueError, setRevenueError] = useState('')
   const [masterSettings, setMasterSettings] = useState({ planName: 'EspaçoOn', planPrice: 49.9 })
   const [clubs, setClubs] = useState([])
   const [logs, setLogs] = useState([])
@@ -312,6 +319,27 @@ export default function App() {
   useEffect(() => {
     if (authenticated) loadAll()
   }, [authenticated])
+
+  useEffect(() => {
+    if (!authenticated || active !== 'billing') return
+
+    let alive = true
+    setRevenueLoading(true)
+    setRevenueError('')
+
+    api.revenue(revenueMonth)
+      .then((data) => {
+        if (alive) setRevenueData(data)
+      })
+      .catch((error) => {
+        if (alive) setRevenueError(error.message || 'Não foi possível carregar o faturamento.')
+      })
+      .finally(() => {
+        if (alive) setRevenueLoading(false)
+      })
+
+    return () => { alive = false }
+  }, [authenticated, active, revenueMonth])
 
   useEffect(() => {
     const handleBeforeInstall = (event) => {
@@ -468,14 +496,74 @@ export default function App() {
         {active === 'billing' && (
           <section className="content-card">
             <div className="card-head">
-              <div><span>Financeiro</span><h2>Mensalidades</h2></div>
+              <div><span>Financeiro</span><h2>Faturamento mensal</h2></div>
+              <label className="revenue-month-picker">
+                <span>Mês</span>
+                <input
+                  type="month"
+                  value={revenueMonth}
+                  onChange={(e) => setRevenueMonth(e.target.value)}
+                />
+              </label>
             </div>
-            <div className="billing-summary">
-              <article><span>Plano</span><strong>{money(masterSettings.planPrice)}</strong><small>por cliente / mês</small></article>
-              <article><span>Recebido no mês</span><strong>{money(dashboard?.receivedThisMonth)}</strong><small>pagamentos registrados</small></article>
-              <article><span>Em atraso</span><strong>{dashboard?.pastDueClubs ?? 0}</strong><small>clientes</small></article>
+
+            {revenueError && <div className="form-error">{revenueError}</div>}
+
+            <div className="billing-summary revenue-summary">
+              <article><span>Recebido</span><strong>{money(revenueData?.totalReceived)}</strong><small>{revenueData?.paymentCount || 0} pagamento(s)</small></article>
+              <article><span>Clientes pagantes</span><strong>{revenueData?.payingClients ?? 0}</strong><small>no mês selecionado</small></article>
+              <article><span>Ticket médio</span><strong>{money(revenueData?.averageTicket)}</strong><small>por pagamento</small></article>
+              <article><span>Potencial mensal</span><strong>{money(revenueData?.potentialRevenue)}</strong><small>{Number(revenueData?.realizationRate || 0).toFixed(1)}% realizado</small></article>
             </div>
-            <ClubTable clubs={clubs} setModalClub={setModalClub} act={act} setLicenseData={setLicenseData} setDetailClubId={setDetailClubId} billingOnly />
+
+            <div className="revenue-table-head">
+              <div>
+                <span>Detalhamento</span>
+                <h3>Pagamentos recebidos</h3>
+              </div>
+              {revenueLoading && <small>Atualizando...</small>}
+            </div>
+
+            {revenueData?.payments?.length ? (
+              <div className="table-wrap">
+                <table className="revenue-table">
+                  <thead>
+                    <tr>
+                      <th>Cliente</th>
+                      <th>Valor</th>
+                      <th>Pagamento</th>
+                      <th>Origem</th>
+                      <th>Ciclo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {revenueData.payments.map((payment) => (
+                      <tr key={payment.id}>
+                        <td>
+                          <div className="club-name">
+                            <strong>{payment.clubName}</strong>
+                            <span>{payment.ownerName || payment.clubId}</span>
+                          </div>
+                        </td>
+                        <td><strong>{money(payment.amount)}</strong></td>
+                        <td>{dateTimeBR(payment.paidAt)}</td>
+                        <td><span className="payment-provider">{payment.provider === 'asaas' ? 'Asaas' : 'Manual'}</span></td>
+                        <td>{dateBR(payment.cycleStart)} → {dateBR(payment.cycleEnd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="empty">Nenhum pagamento recebido neste mês.</div>
+            )}
+
+            <div className="billing-clients-section">
+              <div className="revenue-table-head">
+                <div><span>Assinaturas</span><h3>Situação dos clientes</h3></div>
+              </div>
+              <ClubTable clubs={clubs} setModalClub={setModalClub} act={act} setLicenseData={setLicenseData} setDetailClubId={setDetailClubId} billingOnly />
+            </div>
           </section>
         )}
 
