@@ -657,3 +657,135 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
     grid-template-columns: 1fr;
   }
 }
+
+
+/* Master Web Push */
+.master-notifications-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.master-notification-status,
+.master-notification-events {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #f9fcfe;
+}
+
+.master-notification-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.notification-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.master-notification-status span,
+.master-notification-status strong,
+.master-notification-status small {
+  display: block;
+}
+
+.master-notification-status span {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.master-notification-status strong {
+  margin: 4px 0;
+  color: #23465d;
+  font-size: 13px;
+}
+
+.master-notification-status small {
+  color: #81939d;
+  font-size: 8px;
+}
+
+.master-notification-events {
+  display: grid;
+  gap: 7px;
+}
+
+.master-notification-events strong {
+  color: #23465d;
+  font-size: 11px;
+}
+
+.master-notification-events span {
+  position: relative;
+  padding-left: 14px;
+  color: #68808f;
+  font-size: 9px;
+}
+
+.master-notification-events span::before {
+  content: '';
+  position: absolute;
+  left: 1px;
+  top: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.master-notification-actions {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.master-notification-actions button {
+  min-height: 41px;
+  padding: 0 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 10px;
+  color: #fff;
+  background: var(--blue);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.master-notification-actions .danger-outline {
+  border: 1px solid #efc9c5;
+  color: var(--red);
+  background: #fff;
+}
+
+.notification-notice {
+  margin-top: 13px;
+  margin-bottom: 0;
+}
+
+@media (max-width: 680px) {
+  .master-notifications-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .master-notification-actions {
+    flex-direction: column;
+  }
+
+  .master-notification-actions button {
+    width: 100%;
+  }
+}
