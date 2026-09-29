@@ -7,6 +7,7 @@ import {
   Clock3,
   CreditCard,
   FileClock,
+  Eye,
   KeyRound,
   LayoutDashboard,
   LockKeyhole,
@@ -253,6 +254,7 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [modalClub, setModalClub] = useState(undefined)
   const [licenseData, setLicenseData] = useState(null)
+  const [detailClubId, setDetailClubId] = useState(null)
 
   const loadAll = async () => {
     setLoading(true)
@@ -373,7 +375,7 @@ export default function App() {
                 <div><span>Operação</span><h2>Clientes recentes</h2></div>
                 <button onClick={() => { setModalClub(null); setActive('clubs') }}><Plus size={16} /> Novo cliente</button>
               </div>
-              <ClubTable clubs={clubs.slice(0, 6)} setModalClub={setModalClub} act={act} setLicenseData={setLicenseData} />
+              <ClubTable clubs={clubs.slice(0, 6)} setModalClub={setModalClub} act={act} setLicenseData={setLicenseData} setDetailClubId={setDetailClubId} />
             </section>
           </>
         )}
@@ -385,7 +387,7 @@ export default function App() {
               <button onClick={() => setModalClub(null)}><Plus size={16} /> Novo cliente</button>
             </div>
             <div className="search-box"><Search size={17} /><input placeholder="Buscar clube, proprietário, telefone ou ID..." value={query} onChange={(e) => setQuery(e.target.value)} /></div>
-            <ClubTable clubs={filteredClubs} setModalClub={setModalClub} act={act} setLicenseData={setLicenseData} />
+            <ClubTable clubs={filteredClubs} setModalClub={setModalClub} act={act} setLicenseData={setLicenseData} setDetailClubId={setDetailClubId} />
           </section>
         )}
 
@@ -399,7 +401,7 @@ export default function App() {
               <article><span>Recebido no mês</span><strong>{money(dashboard?.receivedThisMonth)}</strong><small>pagamentos registrados</small></article>
               <article><span>Em atraso</span><strong>{dashboard?.pastDueClubs ?? 0}</strong><small>clientes</small></article>
             </div>
-            <ClubTable clubs={clubs} setModalClub={setModalClub} act={act} setLicenseData={setLicenseData} billingOnly />
+            <ClubTable clubs={clubs} setModalClub={setModalClub} act={act} setLicenseData={setLicenseData} setDetailClubId={setDetailClubId} billingOnly />
           </section>
         )}
 
@@ -434,11 +436,181 @@ export default function App() {
       )}
 
       {licenseData && <LicenseModal data={licenseData} onClose={() => setLicenseData(null)} />}
+      {detailClubId && (
+        <ClubDetails
+          clubId={detailClubId}
+          onClose={() => setDetailClubId(null)}
+          onEdit={(club) => {
+            setDetailClubId(null)
+            setModalClub(club)
+          }}
+          act={act}
+          onLicense={setLicenseData}
+          onRefresh={loadAll}
+        />
+      )}
     </div>
   )
 }
 
-function ClubTable({ clubs, setModalClub, act, setLicenseData, billingOnly = false }) {
+function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      setData(await api.clubDetails(clubId))
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    load()
+  }, [clubId])
+
+  const club = data?.club
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="modal client-detail-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <span>Ficha do cliente</span>
+            <h2>{club?.establishmentName || 'Carregando...'}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose}><X /></button>
+        </div>
+
+        {busy && !data && <div className="empty">Carregando dados do cliente...</div>}
+        {error && <div className="form-error">{error}</div>}
+
+        {club && (
+          <>
+            <section className="client-detail-summary">
+              <article>
+                <span>Responsável</span>
+                <strong>{club.ownerName}</strong>
+                <small>{club.phone}{club.email ? ' • ' + club.email : ''}</small>
+              </article>
+              <article>
+                <span>Plano</span>
+                <strong>{money(club.plan?.price || 49.9)}</strong>
+                <small>{club.plan?.name || 'EspaçoOn'} / mês</small>
+              </article>
+              <article>
+                <span>Próximo vencimento</span>
+                <strong>{dateBR(club.billing?.nextDueDate)}</strong>
+                <small>{statusLabel[club.billing?.status] || club.billing?.status}</small>
+              </article>
+              <article>
+                <span>Status do sistema</span>
+                <strong>{statusLabel[club.system?.status] || club.system?.status}</strong>
+                <small>Última conexão: {dateTimeBR(club.system?.lastSeen)}</small>
+              </article>
+            </section>
+
+            <div className="client-identity">
+              <div><span>Club ID</span><code>{club.id}</code></div>
+              <div><span>Slug</span><code>{club.slug}</code></div>
+              <div><span>Localidade</span><strong>{[club.city, club.state].filter(Boolean).join(' / ') || 'Não informada'}</strong></div>
+              <div><span>Cadastrado em</span><strong>{dateTimeBR(club.createdAt)}</strong></div>
+            </div>
+
+            <div className="client-detail-actions">
+              <button onClick={() => onEdit(club)}><Pencil size={15} /> Editar cadastro</button>
+              {club.system?.status === 'suspended' ? (
+                <button className="ok" onClick={async () => {
+                  await act(() => api.setClubStatus(club.id, 'active', 'Liberação manual pelo Master'), 'Sistema liberado.')
+                  await load()
+                }}><UnlockKeyhole size={15} /> Liberar sistema</button>
+              ) : (
+                <button className="danger" onClick={async () => {
+                  if (!confirm('Bloquear o sistema deste cliente?')) return
+                  await act(() => api.setClubStatus(club.id, 'suspended', 'Bloqueio manual pelo Master'), 'Sistema bloqueado.')
+                  await load()
+                }}><LockKeyhole size={15} /> Bloquear sistema</button>
+              )}
+              <button className="warning" onClick={async () => {
+                await act(() => api.temporaryUnlock(club.id, 24), 'Liberação temporária concedida por 24h.')
+                await load()
+              }}><Clock3 size={15} /> Liberar 24h</button>
+              <button className="money" onClick={async () => {
+                if (!confirm('Registrar pagamento de R$ 49,90 e renovar por mais um ciclo?')) return
+                await act(() => api.markPaid(club.id, 49.9), 'Pagamento registrado e sistema regularizado.')
+                await load()
+              }}><BadgeDollarSign size={15} /> Registrar R$ 49,90</button>
+              <button onClick={async () => {
+                if (!confirm('A chave atual deixará de funcionar. Gerar nova chave?')) return
+                try {
+                  const result = await api.rotateLicense(club.id)
+                  onLicense(result)
+                  await onRefresh()
+                  await load()
+                } catch (err) {
+                  setError(err.message)
+                }
+              }}><RefreshCcw size={15} /> Nova licença</button>
+            </div>
+
+            <section className="client-history-section">
+              <div className="detail-section-head">
+                <div><span>Financeiro</span><h3>Histórico de mensalidades</h3></div>
+                <strong>{money(data.financial?.totalPaid)}</strong>
+              </div>
+
+              {data.payments?.length ? (
+                <div className="detail-history-list">
+                  {data.payments.map((payment) => (
+                    <article key={payment.id}>
+                      <div>
+                        <strong>{money(payment.amount)}</strong>
+                        <span>{payment.provider === 'manual' ? 'Registro manual' : payment.provider}</span>
+                      </div>
+                      <div>
+                        <strong>{dateTimeBR(payment.paidAt)}</strong>
+                        <span>Ciclo até {dateBR(payment.cycleEnd)}</span>
+                      </div>
+                      <span className={'status ' + payment.status}>{payment.status === 'paid' ? 'Pago' : payment.status}</span>
+                    </article>
+                  ))}
+                </div>
+              ) : <div className="empty compact">Nenhum pagamento registrado.</div>}
+            </section>
+
+            <section className="client-history-section">
+              <div className="detail-section-head">
+                <div><span>Auditoria</span><h3>Histórico administrativo</h3></div>
+              </div>
+
+              {data.logs?.length ? (
+                <div className="detail-log-list">
+                  {data.logs.map((log) => (
+                    <article key={log._id}>
+                      <Activity size={15} />
+                      <div>
+                        <strong>{log.description}</strong>
+                        <span>{dateTimeBR(log.createdAt)}</span>
+                      </div>
+                      <code>{log.action}</code>
+                    </article>
+                  ))}
+                </div>
+              ) : <div className="empty compact">Nenhuma atividade registrada.</div>}
+            </section>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ClubTable({ clubs, setModalClub, act, setLicenseData, setDetailClubId, billingOnly = false }) {
   if (!clubs.length) return <div className="empty">Nenhum cliente encontrado.</div>
 
   return (
@@ -461,6 +633,7 @@ function ClubTable({ clubs, setModalClub, act, setLicenseData, billingOnly = fal
               <td>{dateTimeBR(club.system?.lastSeen)}</td>
               <td>
                 <div className="row-actions">
+                  <button title="Ver ficha completa" onClick={() => setDetailClubId(club.id)}><Eye /></button>
                   {!billingOnly && <button title="Editar" onClick={() => setModalClub(club)}><Pencil /></button>}
                   {club.system?.status === 'suspended'
                     ? <button title="Liberar" className="ok" onClick={() => act(() => api.setClubStatus(club.id, 'active', 'Liberação manual pelo Master'), 'Sistema liberado.')}><UnlockKeyhole /></button>
