@@ -924,3 +924,17 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
     grid-template-columns: 1fr;
   }
 }
+
+
+/* Demo mode */
+.client-detail-actions .demo {
+  border-color: #bcdcf6;
+  color: #2179b7;
+  background: #f2f9ff;
+}
+
+.client-detail-actions .demo-active {
+  border-color: #d5c6fa;
+  color: #6847b5;
+  background: #f7f3ff;
+}
