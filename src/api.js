@@ -26,6 +26,8 @@ export const api = {
 
   dashboard: () => request('/api/master/dashboard'),
   clubs: () => request('/api/master/clubs'),
+  clubDetails: (id) =>
+    request('/api/master/clubs/' + encodeURIComponent(id) + '/details'),
   createClub: (payload) =>
     request('/api/master/clubs', {
       method: 'POST',
