@@ -305,7 +305,7 @@ app.post('/api/master/login', loginLimiter, (req, res) => {
   }
   res.cookie('espacoon_master', signSession(), {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     path: '/',
     maxAge: 12 * 60 * 60 * 1000,
@@ -320,7 +320,7 @@ app.get('/api/master/session', requireMaster, (_req, res) => {
 app.post('/api/master/logout', (_req, res) => {
   res.clearCookie('espacoon_master', {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     path: '/',
   })
@@ -585,8 +585,12 @@ app.use((error, _req, res, _next) => {
   })
 })
 
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'Rota não encontrada.' })
+})
+
 app.use(express.static(path.join(rootDir, 'dist')))
-app.get('*', (_req, res) => {
+app.use((_req, res) => {
   res.sendFile(path.join(rootDir, 'dist', 'index.html'))
 })
 
