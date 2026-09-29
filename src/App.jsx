@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Clock3,
   CreditCard,
+  Download,
   FileClock,
   Eye,
   KeyRound,
@@ -274,6 +275,11 @@ export default function App() {
   const [pushSubscription, setPushSubscription] = useState(null)
   const [pushBusy, setPushBusy] = useState(false)
   const [pushMessage, setPushMessage] = useState('')
+  const [installPrompt, setInstallPrompt] = useState(null)
+  const [appInstalled, setAppInstalled] = useState(() =>
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true
+  )
 
   const loadAll = async () => {
     setLoading(true)
@@ -306,6 +312,45 @@ export default function App() {
   useEffect(() => {
     if (authenticated) loadAll()
   }, [authenticated])
+
+  useEffect(() => {
+    const handleBeforeInstall = (event) => {
+      event.preventDefault()
+      setInstallPrompt(event)
+    }
+
+    const handleInstalled = () => {
+      setAppInstalled(true)
+      setInstallPrompt(null)
+    }
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall)
+    window.addEventListener('appinstalled', handleInstalled)
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall)
+      window.removeEventListener('appinstalled', handleInstalled)
+    }
+  }, [])
+
+  const installApp = async () => {
+    if (appInstalled) return
+
+    if (installPrompt) {
+      installPrompt.prompt()
+      await installPrompt.userChoice.catch(() => null)
+      setInstallPrompt(null)
+      return
+    }
+
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent)
+    if (isIOS) {
+      window.alert('No iPhone: abra no Safari, toque em Compartilhar e escolha “Adicionar à Tela de Início”.')
+      return
+    }
+
+    window.alert('O navegador ainda não liberou a instalação. Atualize a página uma vez após o deploy. No Chrome, a opção também pode aparecer no menu ⋮ como “Instalar EspaçoOn Master”.')
+  }
 
   const filteredClubs = useMemo(() => {
     const search = query.trim().toLowerCase()
@@ -379,7 +424,13 @@ export default function App() {
             <span>Central de administração</span>
             <h1>{nav.find(([id]) => id === active)?.[1]}</h1>
           </div>
-          <button className="refresh" onClick={loadAll} disabled={loading}><RefreshCcw size={17} /> Atualizar</button>
+          <div className="topbar-actions">
+            <button className="install-master" onClick={installApp} disabled={appInstalled}>
+              <Download size={17} />
+              {appInstalled ? 'Instalado' : 'Instalar app'}
+            </button>
+            <button className="refresh" onClick={loadAll} disabled={loading}><RefreshCcw size={17} /> Atualizar</button>
+          </div>
         </header>
 
         {message && <div className="notice">{message}</div>}
