@@ -25,6 +25,12 @@ export const api = {
   logout: () => request('/api/master/logout', { method: 'POST' }),
 
   dashboard: () => request('/api/master/dashboard'),
+  settings: () => request('/api/master/settings'),
+  saveSettings: (payload) =>
+    request('/api/master/settings', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   clubs: () => request('/api/master/clubs'),
   clubDetails: (id) =>
     request('/api/master/clubs/' + encodeURIComponent(id) + '/details'),
@@ -48,10 +54,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ hours }),
     }),
-  markPaid: (id, paidAmount = 49.9) =>
+  markPaid: (id, paidAmount) =>
     request('/api/master/clubs/' + encodeURIComponent(id) + '/mark-paid', {
       method: 'POST',
-      body: JSON.stringify({ paidAmount }),
+      body: JSON.stringify(paidAmount == null ? {} : { paidAmount }),
     }),
   rotateLicense: (id) =>
     request('/api/master/clubs/' + encodeURIComponent(id) + '/rotate-license', {
