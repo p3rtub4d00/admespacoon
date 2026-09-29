@@ -733,6 +733,63 @@ app.get('/api/master/dashboard', requireMaster, async (_req, res, next) => {
   }
 })
 
+app.get('/api/master/revenue', requireMaster, async (req, res, next) => {
+  try {
+    const month = text(req.query?.month, 7)
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: 'Mês inválido.' })
+    }
+
+    const [year, monthNumber] = month.split('-').map(Number)
+    const start = new Date(year, monthNumber - 1, 1)
+    const end = new Date(year, monthNumber, 1)
+
+    const [payments, clubs, settings] = await Promise.all([
+      Payment.find({
+        status: 'paid',
+        paidAt: { $gte: start, $lt: end },
+      }).sort({ paidAt: -1 }).lean(),
+      Club.find().lean(),
+      getMasterSettings(),
+    ])
+
+    const clubsById = new Map(clubs.map((club) => [club.id, club]))
+    const totalReceived = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+    const paidClubIds = new Set(payments.map((payment) => payment.clubId).filter(Boolean))
+    const activeClubs = clubs.filter((club) => club.system?.status !== 'cancelled')
+    const potentialRevenue = activeClubs.reduce(
+      (sum, club) => sum + Number(club.plan?.price || settings.planPrice || 0),
+      0,
+    )
+
+    res.json({
+      month,
+      totalReceived,
+      paymentCount: payments.length,
+      payingClients: paidClubIds.size,
+      averageTicket: payments.length ? totalReceived / payments.length : 0,
+      potentialRevenue,
+      realizationRate: potentialRevenue > 0 ? (totalReceived / potentialRevenue) * 100 : 0,
+      payments: payments.map((payment) => {
+        const club = clubsById.get(payment.clubId)
+        return {
+          id: payment.id,
+          clubId: payment.clubId,
+          clubName: club?.establishmentName || payment.clubId || 'Cliente',
+          ownerName: club?.ownerName || '',
+          amount: Number(payment.amount || 0),
+          provider: payment.provider,
+          paidAt: payment.paidAt,
+          cycleStart: payment.cycleStart,
+          cycleEnd: payment.cycleEnd,
+        }
+      }),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.get('/api/master/clubs', requireMaster, async (_req, res, next) => {
   try {
     const clubs = await Club.find().sort({ createdAt: -1 })
