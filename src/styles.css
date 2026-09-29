@@ -831,3 +831,96 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
     font-size: 0;
   }
 }
+
+
+/* Monthly revenue */
+.revenue-month-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #6d8290;
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.revenue-month-picker input {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: #31566d;
+  background: #fff;
+}
+
+.revenue-summary {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.revenue-table-head {
+  margin-top: 20px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.revenue-table-head span {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+
+.revenue-table-head h3 {
+  margin: 4px 0 0;
+  color: #23465d;
+  font-size: 14px;
+}
+
+.revenue-table-head small {
+  color: #7f929e;
+  font-size: 8px;
+}
+
+.revenue-table {
+  min-width: 760px;
+}
+
+.payment-provider {
+  display: inline-flex;
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #315b79;
+  background: #eef7ff;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.billing-clients-section {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid #e6eef3;
+}
+
+@media (max-width: 900px) {
+  .revenue-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .card-head {
+    flex-wrap: wrap;
+  }
+
+  .revenue-month-picker {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .revenue-summary {
+    grid-template-columns: 1fr;
+  }
+}
