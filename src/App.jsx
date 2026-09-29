@@ -938,8 +938,8 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
               </article>
               <article>
                 <span>Status do sistema</span>
-                <strong>{statusLabel[club.system?.status] || club.system?.status}</strong>
-                <small>Última conexão: {dateTimeBR(club.system?.lastSeen)}</small>
+                <strong>{club.demoMode ? 'Demonstração' : (statusLabel[club.system?.status] || club.system?.status)}</strong>
+                <small>{club.demoMode ? 'Sem cobrança real • painel sem senha' : 'Última conexão: ' + dateTimeBR(club.system?.lastSeen)}</small>
               </article>
             </section>
 
@@ -952,6 +952,24 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
 
             <div className="client-detail-actions">
               <button onClick={() => onEdit(club)}><Pencil size={15} /> Editar cadastro</button>
+              <button
+                className={club.demoMode ? 'demo-active' : 'demo'}
+                onClick={async () => {
+                  const next = !club.demoMode
+                  const message = next
+                    ? 'Ativar modo demonstração? A cobrança recorrente real será encerrada, pagamentos de reservas serão simulados e o painel do clube ficará sem senha.'
+                    : 'Desativar modo demonstração? A operação real será restaurada, incluindo senha, Asaas e cobrança mensal.'
+                  if (!confirm(message)) return
+                  await act(
+                    () => api.setDemoMode(club.id, next),
+                    next ? 'Modo demonstração ativado.' : 'Modo demonstração desativado.',
+                  )
+                  await load()
+                }}
+              >
+                <Eye size={15} />
+                {club.demoMode ? 'Desativar demonstração' : 'Ativar demonstração'}
+              </button>
               {club.system?.status === 'suspended' ? (
                 <button className="ok" onClick={async () => {
                   await act(() => api.setClubStatus(club.id, 'active', 'Liberação manual pelo Master'), 'Sistema liberado.')
@@ -988,7 +1006,7 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
 
             <section className="client-history-section">
               <div className="detail-section-head">
-                <div><span>Asaas</span><h3>Assinatura recorrente</h3></div>
+                <div><span>Asaas</span><h3>{club.demoMode ? 'Cobrança desativada na demonstração' : 'Assinatura recorrente'}</h3></div>
                 {data.asaas?.subscriptionStatus && (
                   <span className={'asaas-status ' + String(data.asaas.subscriptionStatus).toLowerCase()}>
                     {data.asaas.subscriptionStatus}
