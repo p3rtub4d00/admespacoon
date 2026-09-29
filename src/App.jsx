@@ -114,7 +114,7 @@ function Login({ onLogged }) {
   )
 }
 
-function ClubModal({ club, onClose, onSaved }) {
+function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'EspaçoOn' }) {
   const [form, setForm] = useState({
     establishmentName: club?.establishmentName || '',
     ownerName: club?.ownerName || '',
@@ -197,7 +197,7 @@ function ClubModal({ club, onClose, onSaved }) {
             <CreditCard />
             <div>
               <span>Plano atual</span>
-              <strong>EspaçoOn • R$ 49,90/mês</strong>
+              <strong>{planName} • {money(planPrice)}/mês</strong>
             </div>
           </div>
 
@@ -446,6 +446,8 @@ export default function App() {
       {modalClub !== undefined && (
         <ClubModal
           club={modalClub || null}
+          planPrice={masterSettings.planPrice}
+          planName={masterSettings.planName}
           onClose={() => setModalClub(undefined)}
           onSaved={async (result) => {
             setModalClub(undefined)
