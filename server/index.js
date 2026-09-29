@@ -78,6 +78,7 @@ const clubSchema = new mongoose.Schema({
   email: String,
   city: String,
   state: String,
+  demoMode: { type: Boolean, default: false, index: true },
   plan: {
     name: { type: String, default: 'EspaçoOn' },
     price: { type: Number, default: 49.9 },
@@ -479,6 +480,11 @@ async function logAction(action, description, club = null, metadata = null) {
 
 async function refreshClubStatus(club) {
   if (!club || club.billing?.status === 'cancelled' || club.system?.status === 'cancelled') return club
+  if (club.demoMode === true) {
+    club.system.lastSeen = club.system.lastSeen || new Date()
+    await club.save()
+    return club
+  }
 
   const now = new Date()
   const dueDate = club.billing?.nextDueDate ? new Date(club.billing.nextDueDate) : null
@@ -520,6 +526,7 @@ async function refreshClubStatus(club) {
 function effectiveAccess(club) {
   if (!club) return false
   if (club.system?.status === 'cancelled') return false
+  if (club.demoMode === true) return true
   if (club.system?.status === 'active') return true
   const unlock = club.system?.temporaryUnlockUntil
   return Boolean(unlock && new Date(unlock) > new Date())
@@ -587,6 +594,7 @@ function publicClub(club) {
     email: club.email,
     city: club.city,
     state: club.state,
+    demoMode: club.demoMode === true,
     plan: club.plan,
     billing: club.billing,
     system: club.system,
@@ -649,7 +657,7 @@ app.put('/api/master/settings', requireMaster, writeLimiter, async (req, res, ne
     const syncFailures = []
 
     for (const club of clubs) {
-      if (ASAAS_API_KEY && club.billing?.asaasSubscriptionId) {
+      if (ASAAS_API_KEY && club.billing?.asaasSubscriptionId && !club.demoMode) {
         try {
           await asaasRequest('/subscriptions/' + encodeURIComponent(club.billing.asaasSubscriptionId), {
             method: 'PUT',
@@ -945,7 +953,7 @@ app.patch('/api/master/clubs/:id', requireMaster, writeLimiter, async (req, res,
     await club.save()
     await logAction('club.updated', 'Cadastro do cliente atualizado.', club)
 
-    if (ASAAS_API_KEY && club.cpfCnpj && !club.billing?.asaasSubscriptionId) {
+    if (ASAAS_API_KEY && club.cpfCnpj && !club.billing?.asaasSubscriptionId && !club.demoMode) {
       try {
         await ensureAsaasSubscription(club)
       } catch (billingError) {
@@ -957,6 +965,65 @@ app.patch('/api/master/clubs/:id', requireMaster, writeLimiter, async (req, res,
           tag: 'master-billing-failure-' + club.id,
         })
       }
+    }
+
+    res.json(publicClub(club))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/clubs/:id/demo-mode', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const enabled = req.body?.enabled === true
+    if (club.demoMode === enabled) return res.json(publicClub(club))
+
+    if (enabled) {
+      if (ASAAS_API_KEY && club.billing?.asaasSubscriptionId) {
+        await asaasRequest('/subscriptions/' + encodeURIComponent(club.billing.asaasSubscriptionId), {
+          method: 'DELETE',
+        })
+      }
+
+      club.demoMode = true
+      club.billing.asaasSubscriptionId = null
+      club.billing.currentPaymentId = null
+      club.billing.currentPaymentDueDate = null
+      await club.save()
+
+      await logAction(
+        'club.demo_enabled',
+        'Modo demonstração ativado. Cobranças reais e senha do painel foram desativadas.',
+        club,
+      )
+
+      notifyMaster({
+        title: 'Demonstração ativada',
+        body: club.establishmentName + ' entrou em modo de demonstração.',
+        tag: 'master-demo-' + club.id,
+      })
+    } else {
+      club.demoMode = false
+      await club.save()
+
+      if (ASAAS_API_KEY && club.cpfCnpj) {
+        await ensureAsaasSubscription(club)
+      }
+
+      await logAction(
+        'club.demo_disabled',
+        'Modo demonstração desativado. Operação real restaurada.',
+        club,
+      )
+
+      notifyMaster({
+        title: 'Demonstração encerrada',
+        body: club.establishmentName + ' voltou ao modo de produção.',
+        tag: 'master-demo-' + club.id,
+      })
     }
 
     res.json(publicClub(club))
@@ -1074,6 +1141,16 @@ app.post('/api/master/clubs/:id/rotate-license', requireMaster, writeLimiter, as
 app.get('/api/license/billing', authenticateClubLicense, async (req, res, next) => {
   try {
     const club = await refreshClubStatus(req.club)
+    if (club.demoMode) {
+      return res.json({
+        demoMode: true,
+        amount: 0,
+        billingStatus: 'demo',
+        nextDueDate: null,
+        canGeneratePix: false,
+        cpfCnpjConfigured: Boolean(club.cpfCnpj),
+      })
+    }
     const planPrice = await currentPlanPrice()
     res.json({
       amount: planPrice,
@@ -1090,6 +1167,9 @@ app.get('/api/license/billing', authenticateClubLicense, async (req, res, next) 
 app.post('/api/license/billing/pix', authenticateClubLicense, writeLimiter, async (req, res, next) => {
   try {
     const club = await refreshClubStatus(req.club)
+    if (club.demoMode) {
+      return res.status(409).json({ error: 'Cobrança desativada no modo demonstração.', demoMode: true })
+    }
     const pix = await getPixForClub(club)
     await logAction('billing.pix_requested', 'QR Code da mensalidade solicitado pelo sistema do clube.', club, {
       paymentId: pix.paymentId,
@@ -1327,8 +1407,9 @@ app.get('/api/license/status', publicLicenseLimiter, async (req, res, next) => {
     res.json({
       ok: true,
       active: effectiveAccess(club),
-      status: club.system.status,
-      billingStatus: club.billing.status,
+      demoMode: club.demoMode === true,
+      status: club.demoMode ? 'demo' : club.system.status,
+      billingStatus: club.demoMode ? 'demo' : club.billing.status,
       nextDueDate: club.billing.nextDueDate,
       temporaryUnlockUntil: club.system.temporaryUnlockUntil,
       club: {
