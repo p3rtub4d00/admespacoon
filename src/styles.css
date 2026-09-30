@@ -1006,3 +1006,74 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
     grid-template-columns: 1fr;
   }
 }
+
+
+.mercadopago-connection {
+  margin-top: 12px;
+  padding: 13px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e0eaf0;
+  border-radius: 11px;
+  background: #fbfdff;
+}
+
+.mercadopago-connection span,
+.mercadopago-connection strong,
+.mercadopago-connection small {
+  display: block;
+}
+
+.mercadopago-connection span {
+  color: #7f929e;
+  font-size: 8px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.mercadopago-connection strong {
+  margin-top: 4px;
+  color: #31566d;
+  font-size: 10px;
+}
+
+.mercadopago-connection small {
+  margin-top: 4px;
+  color: #81939d;
+  font-size: 8px;
+}
+
+.mercadopago-connection button {
+  min-height: 39px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  color: #fff;
+  background: var(--blue);
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.mercadopago-connection button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.mercadopago-connection .danger-outline {
+  border: 1px solid #efc9c5;
+  color: var(--red);
+  background: #fff;
+}
+
+@media (max-width: 620px) {
+  .mercadopago-connection {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mercadopago-connection button {
+    width: 100%;
+  }
+}
