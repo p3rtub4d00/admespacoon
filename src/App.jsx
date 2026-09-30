@@ -1049,7 +1049,6 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
                   </button>
                 )}
               </div>
-              </div>
             </section>
 
             <div className="client-detail-actions">
