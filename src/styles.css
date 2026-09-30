@@ -938,3 +938,142 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
   color: #6847b5;
   background: #f7f3ff;
 }
+
+
+/* Reservation payment provider */
+.payment-provider-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #e7eff4;
+}
+
+.payment-provider-control {
+  display: grid;
+  grid-template-columns: minmax(240px, 360px) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.payment-provider-control label {
+  color: #5b717d;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.payment-provider-control select {
+  width: 100%;
+  min-height: 43px;
+  margin-top: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: 0;
+  color: #294553;
+  background: #fbfdff;
+}
+
+.payment-provider-control select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(31,142,250,.08);
+}
+
+.payment-provider-note {
+  padding: 12px 14px;
+  border: 1px solid #d7e8f4;
+  border-radius: 11px;
+  background: #f6fbff;
+}
+
+.payment-provider-note strong,
+.payment-provider-note span {
+  display: block;
+}
+
+.payment-provider-note strong {
+  color: #315b79;
+  font-size: 10px;
+}
+
+.payment-provider-note span {
+  margin-top: 5px;
+  color: #718794;
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+@media (max-width: 720px) {
+  .payment-provider-control {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.mercadopago-connection {
+  margin-top: 12px;
+  padding: 13px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e0eaf0;
+  border-radius: 11px;
+  background: #fbfdff;
+}
+
+.mercadopago-connection span,
+.mercadopago-connection strong,
+.mercadopago-connection small {
+  display: block;
+}
+
+.mercadopago-connection span {
+  color: #7f929e;
+  font-size: 8px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.mercadopago-connection strong {
+  margin-top: 4px;
+  color: #31566d;
+  font-size: 10px;
+}
+
+.mercadopago-connection small {
+  margin-top: 4px;
+  color: #81939d;
+  font-size: 8px;
+}
+
+.mercadopago-connection button {
+  min-height: 39px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  color: #fff;
+  background: var(--blue);
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.mercadopago-connection button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.mercadopago-connection .danger-outline {
+  border: 1px solid #efc9c5;
+  color: var(--red);
+  background: #fff;
+}
+
+@media (max-width: 620px) {
+  .mercadopago-connection {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mercadopago-connection button {
+    width: 100%;
+  }
+}

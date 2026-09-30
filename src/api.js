@@ -51,6 +51,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     }),
+  setPaymentProvider: (id, provider) =>
+    request('/api/master/clubs/' + encodeURIComponent(id) + '/payment-provider', {
+      method: 'POST',
+      body: JSON.stringify({ provider }),
+    }),
+  connectMercadoPago: (id) =>
+    request('/api/master/clubs/' + encodeURIComponent(id) + '/mercadopago/connect', {
+      method: 'POST',
+    }),
+  disconnectMercadoPago: (id) =>
+    request('/api/master/clubs/' + encodeURIComponent(id) + '/mercadopago/disconnect', {
+      method: 'POST',
+    }),
   setClubStatus: (id, systemStatus, reason) =>
     request('/api/master/clubs/' + encodeURIComponent(id) + '/status', {
       method: 'POST',

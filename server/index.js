@@ -25,6 +25,17 @@ const ASAAS_BASE_URL = ASAAS_ENV === 'sandbox'
   ? 'https://api-sandbox.asaas.com/v3'
   : 'https://api.asaas.com/v3'
 
+const MERCADOPAGO_CLIENT_ID = String(process.env.MERCADOPAGO_CLIENT_ID || '').trim()
+const MERCADOPAGO_CLIENT_SECRET = String(process.env.MERCADOPAGO_CLIENT_SECRET || '').trim()
+const MERCADOPAGO_REDIRECT_URI = String(process.env.MERCADOPAGO_REDIRECT_URI || '').trim()
+const MERCADOPAGO_TOKEN_ENCRYPTION_KEY = String(process.env.MERCADOPAGO_TOKEN_ENCRYPTION_KEY || '').trim()
+const MERCADOPAGO_OAUTH_CONFIGURED = Boolean(
+  MERCADOPAGO_CLIENT_ID &&
+  MERCADOPAGO_CLIENT_SECRET &&
+  MERCADOPAGO_REDIRECT_URI &&
+  MERCADOPAGO_TOKEN_ENCRYPTION_KEY
+)
+
 app.set('trust proxy', 1)
 app.use(helmet({
   contentSecurityPolicy: {
@@ -79,6 +90,25 @@ const clubSchema = new mongoose.Schema({
   city: String,
   state: String,
   demoMode: { type: Boolean, default: false, index: true },
+  reservationPaymentProvider: {
+    type: String,
+    enum: ['asaas', 'mercadopago'],
+    default: 'asaas',
+    index: true,
+  },
+  payments: {
+    mercadoPago: {
+      userId: String,
+      publicKey: String,
+      accessTokenEncrypted: String,
+      refreshTokenEncrypted: String,
+      scope: String,
+      liveMode: Boolean,
+      expiresAt: Date,
+      connectedAt: Date,
+      updatedAt: Date,
+    },
+  },
   plan: {
     name: { type: String, default: 'EspaçoOn' },
     price: { type: Number, default: 49.9 },
@@ -142,6 +172,15 @@ const webhookEventSchema = new mongoose.Schema({
 }, { timestamps: true })
 
 const WebhookEvent = mongoose.model('MasterWebhookEvent', webhookEventSchema)
+
+const mercadoPagoOAuthAttemptSchema = new mongoose.Schema({
+  stateHash: { type: String, required: true, unique: true, index: true },
+  clubId: { type: String, required: true, index: true },
+  verifierEncrypted: { type: String, required: true },
+  expiresAt: { type: Date, required: true, expires: 0 },
+}, { timestamps: true })
+
+const MercadoPagoOAuthAttempt = mongoose.model('MercadoPagoOAuthAttempt', mercadoPagoOAuthAttemptSchema)
 
 const pushConfigSchema = new mongoose.Schema({
   key: { type: String, default: 'main', unique: true },
@@ -303,6 +342,78 @@ function hashLicense(key) {
 
 function generateLicenseKey() {
   return crypto.randomBytes(32).toString('base64url')
+}
+
+function encryptionKey() {
+  if (!MERCADOPAGO_TOKEN_ENCRYPTION_KEY) {
+    throw Object.assign(new Error('Criptografia do Mercado Pago não configurada.'), { statusCode: 503 })
+  }
+  return crypto.createHash('sha256').update(MERCADOPAGO_TOKEN_ENCRYPTION_KEY).digest()
+}
+
+function encryptSecret(value) {
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey(), iv)
+  const encrypted = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return [iv, tag, encrypted].map((item) => item.toString('base64url')).join('.')
+}
+
+function decryptSecret(payload) {
+  const [ivPart, tagPart, dataPart] = String(payload || '').split('.')
+  if (!ivPart || !tagPart || !dataPart) throw new Error('Segredo criptografado inválido.')
+  const decipher = crypto.createDecipheriv(
+    'aes-256-gcm',
+    encryptionKey(),
+    Buffer.from(ivPart, 'base64url'),
+  )
+  decipher.setAuthTag(Buffer.from(tagPart, 'base64url'))
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(dataPart, 'base64url')),
+    decipher.final(),
+  ])
+  return decrypted.toString('utf8')
+}
+
+function sha256Base64Url(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('base64url')
+}
+
+function mercadoPagoConnectionInfo(club) {
+  const mp = club?.payments?.mercadoPago || {}
+  return {
+    platformConfigured: MERCADOPAGO_OAUTH_CONFIGURED,
+    connected: Boolean(mp.userId && mp.accessTokenEncrypted),
+    userId: mp.userId || null,
+    publicKey: mp.publicKey || null,
+    scope: mp.scope || null,
+    liveMode: mp.liveMode === true,
+    expiresAt: mp.expiresAt || null,
+    connectedAt: mp.connectedAt || null,
+    updatedAt: mp.updatedAt || null,
+  }
+}
+
+async function mercadoPagoTokenRequest(body) {
+  const response = await fetch('https://api.mercadopago.com/oauth/token', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const message =
+      data?.message ||
+      data?.error_description ||
+      data?.error ||
+      'Não foi possível concluir a autorização do Mercado Pago.'
+    throw Object.assign(new Error(message), { statusCode: 502 })
+  }
+  return data
 }
 
 function addDays(date, days) {
@@ -595,6 +706,7 @@ function publicClub(club) {
     city: club.city,
     state: club.state,
     demoMode: club.demoMode === true,
+    reservationPaymentProvider: club.reservationPaymentProvider || 'asaas',
     plan: club.plan,
     billing: club.billing,
     system: club.system,
@@ -872,6 +984,7 @@ app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) =
         lastPayment: paidPayments[0] || null,
       },
       asaas,
+      mercadopago: mercadoPagoConnectionInfo(club),
       payments,
       logs,
     })
@@ -1025,6 +1138,190 @@ app.post('/api/master/clubs/:id/demo-mode', requireMaster, writeLimiter, async (
         tag: 'master-demo-' + club.id,
       })
     }
+
+    res.json(publicClub(club))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/clubs/:id/mercadopago/connect', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    if (!MERCADOPAGO_OAUTH_CONFIGURED) {
+      return res.status(503).json({
+        error: 'OAuth do Mercado Pago ainda não está configurado no Master.',
+      })
+    }
+
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const state = crypto.randomBytes(32).toString('base64url')
+    const verifier = crypto.randomBytes(48).toString('base64url')
+    const challenge = sha256Base64Url(verifier)
+
+    await MercadoPagoOAuthAttempt.deleteMany({ clubId: club.id })
+    await MercadoPagoOAuthAttempt.create({
+      stateHash: sha256Base64Url(state),
+      clubId: club.id,
+      verifierEncrypted: encryptSecret(verifier),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    })
+
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: MERCADOPAGO_CLIENT_ID,
+      redirect_uri: MERCADOPAGO_REDIRECT_URI,
+      state,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    })
+
+    res.json({
+      authorizationUrl: 'https://auth.mercadopago.com/authorization?' + params.toString(),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/oauth/mercadopago/callback', async (req, res, next) => {
+  try {
+    if (!MERCADOPAGO_OAUTH_CONFIGURED) {
+      return res.status(503).send('Mercado Pago não configurado no EspaçoOn Master.')
+    }
+
+    const code = text(req.query?.code, 500)
+    const state = text(req.query?.state, 500)
+    if (!code || !state) {
+      return res.status(400).send('Autorização do Mercado Pago incompleta.')
+    }
+
+    const stateHash = sha256Base64Url(state)
+    const attempt = await MercadoPagoOAuthAttempt.findOne({ stateHash })
+    if (!attempt || new Date(attempt.expiresAt) <= new Date()) {
+      if (attempt) await MercadoPagoOAuthAttempt.deleteOne({ _id: attempt._id })
+      return res.status(400).send('Esta autorização expirou. Volte ao Master e tente novamente.')
+    }
+
+    const club = await Club.findOne({ id: attempt.clubId })
+    if (!club) {
+      await MercadoPagoOAuthAttempt.deleteOne({ _id: attempt._id })
+      return res.status(404).send('Cliente não encontrado.')
+    }
+
+    const codeVerifier = decryptSecret(attempt.verifierEncrypted)
+    const token = await mercadoPagoTokenRequest({
+      client_id: MERCADOPAGO_CLIENT_ID,
+      client_secret: MERCADOPAGO_CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: MERCADOPAGO_REDIRECT_URI,
+      code_verifier: codeVerifier,
+    })
+
+    if (!token?.access_token || !token?.user_id) {
+      throw Object.assign(new Error('Mercado Pago não retornou as credenciais esperadas.'), { statusCode: 502 })
+    }
+
+    const now = new Date()
+    const expiresIn = Number(token.expires_in || 0)
+    club.payments = club.payments || {}
+    club.payments.mercadoPago = {
+      userId: String(token.user_id),
+      publicKey: token.public_key || '',
+      accessTokenEncrypted: encryptSecret(token.access_token),
+      refreshTokenEncrypted: token.refresh_token ? encryptSecret(token.refresh_token) : '',
+      scope: token.scope || '',
+      liveMode: token.live_mode === true,
+      expiresAt: expiresIn > 0 ? new Date(now.getTime() + expiresIn * 1000) : null,
+      connectedAt: club.payments?.mercadoPago?.connectedAt || now,
+      updatedAt: now,
+    }
+    await club.save()
+    await MercadoPagoOAuthAttempt.deleteOne({ _id: attempt._id })
+
+    await logAction(
+      'club.mercadopago_connected',
+      'Conta Mercado Pago conectada ao clube.',
+      club,
+      { mercadoPagoUserId: String(token.user_id), liveMode: token.live_mode === true },
+    )
+
+    res.redirect('/?mercadopago=connected&club=' + encodeURIComponent(club.id))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/clubs/:id/mercadopago/disconnect', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    club.payments = club.payments || {}
+    club.payments.mercadoPago = {
+      userId: '',
+      publicKey: '',
+      accessTokenEncrypted: '',
+      refreshTokenEncrypted: '',
+      scope: '',
+      liveMode: false,
+      expiresAt: null,
+      connectedAt: null,
+      updatedAt: new Date(),
+    }
+
+    if ((club.reservationPaymentProvider || 'asaas') === 'mercadopago') {
+      club.reservationPaymentProvider = 'asaas'
+    }
+
+    await club.save()
+    await logAction(
+      'club.mercadopago_disconnected',
+      'Conta Mercado Pago desconectada. O provedor de reservas voltou para Asaas.',
+      club,
+    )
+
+    res.json({
+      club: publicClub(club),
+      mercadopago: mercadoPagoConnectionInfo(club),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/clubs/:id/payment-provider', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const provider = text(req.body?.provider, 30).toLowerCase()
+    if (!['asaas', 'mercadopago'].includes(provider)) {
+      return res.status(400).json({ error: 'Provedor de pagamento inválido.' })
+    }
+
+    if (provider === 'mercadopago') {
+      const mp = mercadoPagoConnectionInfo(club)
+      if (!mp.platformConfigured) {
+        return res.status(409).json({ error: 'Configure primeiro o OAuth do Mercado Pago no Master.' })
+      }
+      if (!mp.connected) {
+        return res.status(409).json({ error: 'Conecte primeiro a conta Mercado Pago deste cliente.' })
+      }
+    }
+
+    const previousProvider = club.reservationPaymentProvider || 'asaas'
+    club.reservationPaymentProvider = provider
+    await club.save()
+
+    await logAction(
+      'club.payment_provider_changed',
+      'Provedor de recebimento das reservas alterado.',
+      club,
+      { previousProvider, provider },
+    )
 
     res.json(publicClub(club))
   } catch (error) {
@@ -1410,6 +1707,8 @@ app.get('/api/license/status', publicLicenseLimiter, async (req, res, next) => {
       demoMode: club.demoMode === true,
       status: club.demoMode ? 'demo' : club.system.status,
       billingStatus: club.demoMode ? 'demo' : club.billing.status,
+      paymentProvider: club.reservationPaymentProvider || 'asaas',
+      mercadoPagoConnected: mercadoPagoConnectionInfo(club).connected,
       nextDueDate: club.billing.nextDueDate,
       temporaryUnlockUntil: club.system.temporaryUnlockUntil,
       club: {
