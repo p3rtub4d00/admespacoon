@@ -950,6 +950,55 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
               <div><span>Cadastrado em</span><strong>{dateTimeBR(club.createdAt)}</strong></div>
             </div>
 
+            <section className="payment-provider-section">
+              <div className="detail-section-head">
+                <div>
+                  <span>Recebimentos das reservas</span>
+                  <h3>Provedor de pagamento</h3>
+                </div>
+              </div>
+
+              <div className="payment-provider-control">
+                <label>
+                  Banco usado nas novas cobranças
+                  <select
+                    value={club.reservationPaymentProvider || 'asaas'}
+                    onChange={async (event) => {
+                      const provider = event.target.value
+                      const current = club.reservationPaymentProvider || 'asaas'
+                      if (provider === current) return
+                      const label = provider === 'mercadopago' ? 'Mercado Pago' : 'Asaas'
+                      if (!confirm(
+                        'Alterar o provedor de novas reservas para ' + label +
+                        '? Cobranças já existentes continuarão vinculadas ao provedor original.'
+                      )) return
+
+                      await act(
+                        () => api.setPaymentProvider(club.id, provider),
+                        'Provedor de recebimento atualizado.',
+                      )
+                      await load()
+                    }}
+                  >
+                    <option value="asaas">Asaas</option>
+                    <option value="mercadopago" disabled>Mercado Pago — preparação</option>
+                  </select>
+                </label>
+
+                <div className="payment-provider-note">
+                  <strong>
+                    {(club.reservationPaymentProvider || 'asaas') === 'asaas'
+                      ? 'Asaas ativo para reservas'
+                      : 'Mercado Pago selecionado'}
+                  </strong>
+                  <span>
+                    A mensalidade do EspaçoOn continua separada e permanece no Asaas.
+                    O Mercado Pago será liberado somente após a próxima etapa da integração.
+                  </span>
+                </div>
+              </div>
+            </section>
+
             <div className="client-detail-actions">
               <button onClick={() => onEdit(club)}><Pencil size={15} /> Editar cadastro</button>
               <button
