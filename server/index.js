@@ -1424,6 +1424,135 @@ app.post('/api/license/mercadopago/disconnect', authenticateClubLicense, writeLi
   }
 })
 
+app.get('/api/license/mercadopago/config', authenticateClubLicense, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.club.id }).lean()
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const mp = club.payments?.mercadoPago || {}
+    res.json({
+      paymentProvider: club.reservationPaymentProvider || 'asaas',
+      connected: Boolean(mp.accessTokenEncrypted),
+      publicKey: mp.publicKey || '',
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+
+app.post('/api/license/mercadopago/orders/card', authenticateClubLicense, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.club.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    if ((club.reservationPaymentProvider || 'asaas') !== 'mercadopago') {
+      return res.status(409).json({ error: 'Mercado Pago não está selecionado para este clube.' })
+    }
+
+    const amount = Number(req.body?.amount)
+    const externalReference = text(req.body?.externalReference, 64)
+    const description = text(req.body?.description, 160)
+    const token = text(req.body?.token, 500)
+    const paymentMethodId = text(req.body?.paymentMethodId, 40)
+    const paymentTypeId = text(req.body?.paymentTypeId, 40)
+    const installments = Number(req.body?.installments || 1)
+    const payerEmail = text(req.body?.payerEmail, 160).toLowerCase()
+    const identificationType = text(req.body?.identificationType || 'CPF', 12).toUpperCase()
+    const identificationNumber = text(req.body?.identificationNumber, 30).replace(/\D/g, '')
+
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) {
+      return res.status(400).json({ error: 'Valor da cobrança inválido.' })
+    }
+    if (!externalReference || !token || !paymentMethodId) {
+      return res.status(400).json({ error: 'Dados do cartão incompletos.' })
+    }
+    if (paymentTypeId !== 'credit_card') {
+      return res.status(400).json({ error: 'Neste momento, o EspaçoOn aceita apenas cartão de crédito.' })
+    }
+    if (!Number.isInteger(installments) || installments < 1 || installments > 12) {
+      return res.status(400).json({ error: 'Quantidade de parcelas inválida.' })
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail)) {
+      return res.status(400).json({ error: 'E-mail do pagador inválido.' })
+    }
+
+    const totalAmount = amount.toFixed(2)
+    const order = await mercadoPagoApiRequest(club, '/v1/orders', {
+      method: 'POST',
+      idempotencyKey: stableUuid(club.id + ':card:' + externalReference),
+      body: {
+        type: 'online',
+        total_amount: totalAmount,
+        external_reference: externalReference,
+        processing_mode: 'automatic',
+        capture_mode: 'automatic',
+        description: description || ('Reserva EspaçoOn ' + externalReference),
+        config: {
+          online: {
+            transaction_security: {
+              validation: 'on_fraud_risk',
+            },
+          },
+        },
+        payer: {
+          email: payerEmail,
+          ...(identificationNumber ? {
+            identification: {
+              type: identificationType || 'CPF',
+              number: identificationNumber,
+            },
+          } : {}),
+        },
+        transactions: {
+          payments: [
+            {
+              amount: totalAmount,
+              payment_method: {
+                id: paymentMethodId,
+                type: 'credit_card',
+                token,
+                installments,
+              },
+            },
+          ],
+        },
+      },
+    })
+
+    const payment = order?.transactions?.payments?.[0] || {}
+    const method = payment?.payment_method || {}
+    const transactionSecurity = method?.transaction_security || {}
+
+    await cacheMercadoPagoOrder(club, order, {
+      externalReference,
+      liveMode: order?.live_mode === true,
+    })
+
+    await logAction(
+      'club.mercadopago_card_order_created',
+      'Cobrança de cartão Mercado Pago criada para uma reserva.',
+      club,
+      {
+        externalReference,
+        orderId: order?.id || null,
+        paymentId: payment?.id || null,
+        amount,
+        installments,
+      },
+    )
+
+    res.status(201).json({
+      orderId: order?.id || null,
+      paymentId: payment?.id || null,
+      status: order?.status || payment?.status || null,
+      statusDetail: order?.status_detail || payment?.status_detail || null,
+      challengeUrl: transactionSecurity?.url || null,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
 
 app.post('/api/license/mercadopago/orders', authenticateClubLicense, writeLimiter, async (req, res, next) => {
   try {
@@ -1505,6 +1634,7 @@ app.post('/api/license/mercadopago/orders', authenticateClubLicense, writeLimite
       qrCode: method?.qr_code || null,
       qrCodeBase64: method?.qr_code_base64 || null,
       ticketUrl: method?.ticket_url || null,
+      challengeUrl: transactionSecurity?.url || null,
     })
   } catch (error) {
     next(error)
@@ -1537,6 +1667,7 @@ app.get('/api/license/mercadopago/orders/:orderId', authenticateClubLicense, asy
 
     const payment = order?.transactions?.payments?.[0] || {}
     const method = payment?.payment_method || {}
+    const transactionSecurity = method?.transaction_security || {}
     await cacheMercadoPagoOrder(club, order)
 
     res.json({
