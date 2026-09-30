@@ -29,6 +29,7 @@ const MERCADOPAGO_CLIENT_ID = String(process.env.MERCADOPAGO_CLIENT_ID || '').tr
 const MERCADOPAGO_CLIENT_SECRET = String(process.env.MERCADOPAGO_CLIENT_SECRET || '').trim()
 const MERCADOPAGO_REDIRECT_URI = String(process.env.MERCADOPAGO_REDIRECT_URI || '').trim()
 const MERCADOPAGO_TOKEN_ENCRYPTION_KEY = String(process.env.MERCADOPAGO_TOKEN_ENCRYPTION_KEY || '').trim()
+const MERCADOPAGO_WEBHOOK_SECRET = String(process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim()
 const MERCADOPAGO_OAUTH_CONFIGURED = Boolean(
   MERCADOPAGO_CLIENT_ID &&
   MERCADOPAGO_CLIENT_SECRET &&
@@ -172,6 +173,20 @@ const webhookEventSchema = new mongoose.Schema({
 }, { timestamps: true })
 
 const WebhookEvent = mongoose.model('MasterWebhookEvent', webhookEventSchema)
+
+const mercadoPagoOrderSchema = new mongoose.Schema({
+  orderId: { type: String, required: true, unique: true, index: true },
+  clubId: { type: String, required: true, index: true },
+  externalReference: { type: String, index: true },
+  paymentId: String,
+  status: String,
+  statusDetail: String,
+  liveMode: Boolean,
+  lastEventId: String,
+  lastWebhookAt: Date,
+}, { timestamps: true })
+
+const MercadoPagoOrder = mongoose.model('MasterMercadoPagoOrder', mercadoPagoOrderSchema)
 
 const mercadoPagoOAuthAttemptSchema = new mongoose.Schema({
   stateHash: { type: String, required: true, unique: true, index: true },
@@ -550,6 +565,59 @@ function stableUuid(value) {
     'a' + hex.slice(17, 20),
     hex.slice(20, 32),
   ].join('-')
+}
+
+function validateMercadoPagoWebhookSignature(req) {
+  if (!MERCADOPAGO_WEBHOOK_SECRET) return false
+
+  const xSignature = String(req.get('x-signature') || '')
+  const xRequestId = String(req.get('x-request-id') || '')
+  const rawDataId = String(req.query?.['data.id'] || req.body?.data?.id || '')
+  const dataId = rawDataId.toLowerCase()
+
+  let ts = ''
+  let receivedHash = ''
+  for (const part of xSignature.split(',')) {
+    const [key, ...rest] = part.split('=')
+    const value = rest.join('=').trim()
+    if (key?.trim() === 'ts') ts = value
+    if (key?.trim() === 'v1') receivedHash = value
+  }
+
+  if (!ts || !receivedHash || !xRequestId || !dataId) return false
+
+  const manifest = 'id:' + dataId + ';request-id:' + xRequestId + ';ts:' + ts + ';'
+  const expectedHash = crypto
+    .createHmac('sha256', MERCADOPAGO_WEBHOOK_SECRET)
+    .update(manifest)
+    .digest('hex')
+
+  const a = Buffer.from(expectedHash, 'utf8')
+  const b = Buffer.from(receivedHash, 'utf8')
+  return a.length === b.length && crypto.timingSafeEqual(a, b)
+}
+
+async function cacheMercadoPagoOrder(club, order, metadata = {}) {
+  const payment = order?.transactions?.payments?.[0] || {}
+  const orderId = String(order?.id || metadata.orderId || '')
+  if (!orderId) return null
+
+  return MercadoPagoOrder.findOneAndUpdate(
+    { orderId },
+    {
+      $set: {
+        clubId: club.id,
+        externalReference: order?.external_reference || metadata.externalReference || '',
+        paymentId: payment?.id || null,
+        status: order?.status || payment?.status || null,
+        statusDetail: order?.status_detail || payment?.status_detail || null,
+        liveMode: metadata.liveMode === true,
+        lastEventId: metadata.eventId || null,
+        lastWebhookAt: metadata.fromWebhook ? new Date() : null,
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  ).lean()
 }
 
 async function mercadoPagoTokenRequest(body) {
@@ -1412,6 +1480,11 @@ app.post('/api/license/mercadopago/orders', authenticateClubLicense, writeLimite
     const payment = order?.transactions?.payments?.[0] || {}
     const method = payment?.payment_method || {}
 
+    await cacheMercadoPagoOrder(club, order, {
+      externalReference,
+      liveMode: order?.live_mode === true,
+    })
+
     await logAction(
       'club.mercadopago_order_created',
       'Cobrança Pix Mercado Pago criada para uma reserva.',
@@ -1446,6 +1519,17 @@ app.get('/api/license/mercadopago/orders/:orderId', authenticateClubLicense, asy
     const orderId = text(req.params.orderId, 120)
     if (!orderId) return res.status(400).json({ error: 'Order inválida.' })
 
+    const cached = await MercadoPagoOrder.findOne({ orderId, clubId: club.id }).lean()
+    if (cached?.status === 'processed' && cached?.statusDetail === 'accredited') {
+      return res.json({
+        orderId,
+        paymentId: cached.paymentId || null,
+        status: cached.status,
+        statusDetail: cached.statusDetail,
+        fromWebhook: Boolean(cached.lastWebhookAt),
+      })
+    }
+
     const order = await mercadoPagoApiRequest(
       club,
       '/v1/orders/' + encodeURIComponent(orderId),
@@ -1453,6 +1537,7 @@ app.get('/api/license/mercadopago/orders/:orderId', authenticateClubLicense, asy
 
     const payment = order?.transactions?.payments?.[0] || {}
     const method = payment?.payment_method || {}
+    await cacheMercadoPagoOrder(club, order)
 
     res.json({
       orderId: order?.id || orderId,
@@ -1735,6 +1820,75 @@ app.post('/api/license/billing/pix', authenticateClubLicense, writeLimiter, asyn
     res.json(pix)
   } catch (error) {
     next(error)
+  }
+})
+
+app.post('/api/webhooks/mercadopago', async (req, res) => {
+  if (!MERCADOPAGO_WEBHOOK_SECRET) {
+    return res.status(503).json({ error: 'Webhook Mercado Pago não configurado.' })
+  }
+
+  if (!validateMercadoPagoWebhookSignature(req)) {
+    return res.status(401).json({ error: 'Webhook Mercado Pago não autorizado.' })
+  }
+
+  const eventId = 'MP-' + text(req.body?.id || req.get('x-request-id'), 160)
+  const orderId = text(req.query?.['data.id'] || req.body?.data?.id, 160)
+  const type = text(req.body?.type || req.query?.type, 40)
+  const userId = text(req.body?.user_id, 80)
+
+  if (!orderId || type !== 'order') {
+    return res.status(200).json({ received: true, ignored: true })
+  }
+
+  if (eventId && await WebhookEvent.exists({ id: eventId })) {
+    return res.status(200).json({ received: true, duplicate: true })
+  }
+
+  if (eventId) {
+    await WebhookEvent.create({
+      id: eventId,
+      event: text(req.body?.action || 'mercadopago.order', 80),
+    }).catch(() => {})
+  }
+
+  // Responde rápido ao Mercado Pago. A confirmação completa é consultada na API oficial.
+  res.status(200).json({ received: true })
+
+  try {
+    const club = userId
+      ? await Club.findOne({ 'payments.mercadoPago.userId': userId })
+      : null
+
+    if (!club) {
+      console.warn('Webhook Mercado Pago sem clube correspondente.', { orderId, userId })
+      return
+    }
+
+    const order = await mercadoPagoApiRequest(
+      club,
+      '/v1/orders/' + encodeURIComponent(orderId),
+    )
+
+    await cacheMercadoPagoOrder(club, order, {
+      orderId,
+      eventId,
+      liveMode: req.body?.live_mode === true,
+      fromWebhook: true,
+    })
+
+    await logAction(
+      'club.mercadopago_order_webhook',
+      'Atualização de cobrança Mercado Pago recebida por webhook.',
+      club,
+      {
+        orderId,
+        status: order?.status || null,
+        statusDetail: order?.status_detail || null,
+      },
+    )
+  } catch (error) {
+    console.error('Falha ao processar webhook Mercado Pago:', error?.message || error)
   }
 })
 
