@@ -177,6 +177,7 @@ const mercadoPagoOAuthAttemptSchema = new mongoose.Schema({
   stateHash: { type: String, required: true, unique: true, index: true },
   clubId: { type: String, required: true, index: true },
   verifierEncrypted: { type: String, required: true },
+  returnUrl: String,
   expiresAt: { type: Date, required: true, expires: 0 },
 }, { timestamps: true })
 
@@ -392,6 +393,64 @@ function mercadoPagoConnectionInfo(club) {
     connectedAt: mp.connectedAt || null,
     updatedAt: mp.updatedAt || null,
   }
+}
+
+function safeReturnUrl(value = '') {
+  try {
+    const parsed = new URL(String(value || ''))
+    if (parsed.protocol !== 'https:') return ''
+    if (parsed.username || parsed.password) return ''
+    return parsed.origin + (parsed.pathname || '/') + (parsed.search || '')
+  } catch {
+    return ''
+  }
+}
+
+async function createMercadoPagoAuthorization(club, returnUrl = '') {
+  if (!MERCADOPAGO_OAUTH_CONFIGURED) {
+    throw Object.assign(new Error('OAuth do Mercado Pago ainda não está configurado no Master.'), { statusCode: 503 })
+  }
+
+  const state = crypto.randomBytes(32).toString('base64url')
+  const verifier = crypto.randomBytes(48).toString('base64url')
+  const challenge = sha256Base64Url(verifier)
+
+  await MercadoPagoOAuthAttempt.deleteMany({ clubId: club.id })
+  await MercadoPagoOAuthAttempt.create({
+    stateHash: sha256Base64Url(state),
+    clubId: club.id,
+    verifierEncrypted: encryptSecret(verifier),
+    returnUrl: safeReturnUrl(returnUrl),
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+  })
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: MERCADOPAGO_CLIENT_ID,
+    redirect_uri: MERCADOPAGO_REDIRECT_URI,
+    state,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+  })
+
+  return 'https://auth.mercadopago.com/authorization?' + params.toString()
+}
+
+async function disconnectMercadoPagoForClub(club) {
+  club.payments = club.payments || {}
+  club.payments.mercadoPago = {
+    userId: '',
+    publicKey: '',
+    accessTokenEncrypted: '',
+    refreshTokenEncrypted: '',
+    scope: '',
+    liveMode: false,
+    expiresAt: null,
+    connectedAt: null,
+    updatedAt: new Date(),
+  }
+  await club.save()
+  return club
 }
 
 async function mercadoPagoTokenRequest(body) {
@@ -1147,38 +1206,51 @@ app.post('/api/master/clubs/:id/demo-mode', requireMaster, writeLimiter, async (
 
 app.post('/api/master/clubs/:id/mercadopago/connect', requireMaster, writeLimiter, async (req, res, next) => {
   try {
-    if (!MERCADOPAGO_OAUTH_CONFIGURED) {
-      return res.status(503).json({
-        error: 'OAuth do Mercado Pago ainda não está configurado no Master.',
-      })
-    }
-
     const club = await Club.findOne({ id: req.params.id })
     if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
 
-    const state = crypto.randomBytes(32).toString('base64url')
-    const verifier = crypto.randomBytes(48).toString('base64url')
-    const challenge = sha256Base64Url(verifier)
-
-    await MercadoPagoOAuthAttempt.deleteMany({ clubId: club.id })
-    await MercadoPagoOAuthAttempt.create({
-      stateHash: sha256Base64Url(state),
-      clubId: club.id,
-      verifierEncrypted: encryptSecret(verifier),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    res.json({
+      authorizationUrl: await createMercadoPagoAuthorization(club, req.body?.returnUrl),
     })
+  } catch (error) {
+    next(error)
+  }
+})
 
-    const params = new URLSearchParams({
-      response_type: 'code',
-      client_id: MERCADOPAGO_CLIENT_ID,
-      redirect_uri: MERCADOPAGO_REDIRECT_URI,
-      state,
-      code_challenge: challenge,
-      code_challenge_method: 'S256',
-    })
+app.post('/api/license/mercadopago/connect', authenticateClubLicense, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.club.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    if ((club.reservationPaymentProvider || 'asaas') !== 'mercadopago') {
+      return res.status(409).json({
+        error: 'O Mercado Pago ainda não foi selecionado como provedor deste clube no painel Master.',
+      })
+    }
 
     res.json({
-      authorizationUrl: 'https://auth.mercadopago.com/authorization?' + params.toString(),
+      authorizationUrl: await createMercadoPagoAuthorization(club, req.body?.returnUrl),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/license/mercadopago/disconnect', authenticateClubLicense, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.club.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    await disconnectMercadoPagoForClub(club)
+    await logAction(
+      'club.mercadopago_disconnected',
+      'Conta Mercado Pago desconectada pelo proprietário do clube.',
+      club,
+    )
+
+    res.json({
+      ok: true,
+      mercadopago: mercadoPagoConnectionInfo(club),
     })
   } catch (error) {
     next(error)
@@ -1248,7 +1320,8 @@ app.get('/api/oauth/mercadopago/callback', async (req, res, next) => {
       { mercadoPagoUserId: String(token.user_id), liveMode: token.live_mode === true },
     )
 
-    res.redirect('/?mercadopago=connected&club=' + encodeURIComponent(club.id))
+    const returnUrl = safeReturnUrl(attempt.returnUrl)
+    res.redirect(returnUrl || '/?mercadopago=connected&club=' + encodeURIComponent(club.id))
   } catch (error) {
     next(error)
   }
@@ -1259,27 +1332,10 @@ app.post('/api/master/clubs/:id/mercadopago/disconnect', requireMaster, writeLim
     const club = await Club.findOne({ id: req.params.id })
     if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
 
-    club.payments = club.payments || {}
-    club.payments.mercadoPago = {
-      userId: '',
-      publicKey: '',
-      accessTokenEncrypted: '',
-      refreshTokenEncrypted: '',
-      scope: '',
-      liveMode: false,
-      expiresAt: null,
-      connectedAt: null,
-      updatedAt: new Date(),
-    }
-
-    if ((club.reservationPaymentProvider || 'asaas') === 'mercadopago') {
-      club.reservationPaymentProvider = 'asaas'
-    }
-
-    await club.save()
+    await disconnectMercadoPagoForClub(club)
     await logAction(
       'club.mercadopago_disconnected',
-      'Conta Mercado Pago desconectada. O provedor de reservas voltou para Asaas.',
+      'Conta Mercado Pago desconectada pelo Master.',
       club,
     )
 
@@ -1302,14 +1358,8 @@ app.post('/api/master/clubs/:id/payment-provider', requireMaster, writeLimiter, 
       return res.status(400).json({ error: 'Provedor de pagamento inválido.' })
     }
 
-    if (provider === 'mercadopago') {
-      const mp = mercadoPagoConnectionInfo(club)
-      if (!mp.platformConfigured) {
-        return res.status(409).json({ error: 'Configure primeiro o OAuth do Mercado Pago no Master.' })
-      }
-      if (!mp.connected) {
-        return res.status(409).json({ error: 'Conecte primeiro a conta Mercado Pago deste cliente.' })
-      }
+    if (provider === 'mercadopago' && !MERCADOPAGO_OAUTH_CONFIGURED) {
+      return res.status(409).json({ error: 'Configure primeiro o OAuth do Mercado Pago no Master.' })
     }
 
     const previousProvider = club.reservationPaymentProvider || 'asaas'
