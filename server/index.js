@@ -1599,6 +1599,36 @@ app.post('/api/license/mercadopago/checkout/preferences', authenticateClubLicens
   }
 })
 
+app.post('/api/license/mercadopago/checkout/preferences/:preferenceId/expire', authenticateClubLicense, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.club.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const preferenceId = text(req.params.preferenceId, 120)
+    if (!preferenceId) return res.status(400).json({ error: 'Preferência inválida.' })
+
+    const now = new Date()
+    const until = new Date(now.getTime() + 1000)
+
+    const preference = await mercadoPagoApiRequest(
+      club,
+      '/checkout/preferences/' + encodeURIComponent(preferenceId),
+      {
+        method: 'PUT',
+        body: {
+          expires: true,
+          expiration_date_from: now.toISOString(),
+          expiration_date_to: until.toISOString(),
+        },
+      },
+    )
+
+    res.json({ ok: true, preferenceId: preference?.id || preferenceId })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.get('/api/license/mercadopago/payments/by-reference/:externalReference', authenticateClubLicense, async (req, res, next) => {
   try {
     const club = await Club.findOne({ id: req.club.id })
