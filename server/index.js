@@ -1492,6 +1492,7 @@ app.post('/api/license/mercadopago/orders/card', authenticateClubLicense, writeL
           online: {
             transaction_security: {
               validation: 'on_fraud_risk',
+              liability_shift: 'required',
             },
           },
         },
