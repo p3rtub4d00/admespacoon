@@ -1635,7 +1635,6 @@ app.post('/api/license/mercadopago/orders', authenticateClubLicense, writeLimite
       qrCode: method?.qr_code || null,
       qrCodeBase64: method?.qr_code_base64 || null,
       ticketUrl: method?.ticket_url || null,
-      challengeUrl: transactionSecurity?.url || null,
     })
   } catch (error) {
     next(error)
@@ -1679,6 +1678,7 @@ app.get('/api/license/mercadopago/orders/:orderId', authenticateClubLicense, asy
       qrCode: method?.qr_code || null,
       qrCodeBase64: method?.qr_code_base64 || null,
       ticketUrl: method?.ticket_url || null,
+      challengeUrl: transactionSecurity?.url || null,
     })
   } catch (error) {
     next(error)
