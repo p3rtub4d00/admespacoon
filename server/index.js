@@ -1285,8 +1285,77 @@ app.patch('/api/master/clubs/:id', requireMaster, writeLimiter, async (req, res,
     }
 
     if (input.dueDay !== undefined) {
+      const previousDueDay = Number(club.billing?.dueDay || 10)
+      const dueDayChanged = previousDueDay !== input.dueDay
+
       club.billing.dueDay = input.dueDay
-      if (!club.billing.nextDueDate) club.billing.nextDueDate = nextDueDateFromDay(input.dueDay)
+
+      if (dueDayChanged || !club.billing.nextDueDate) {
+        const newDueDate = nextDueDateFromDay(input.dueDay)
+        const newDueDateISO = newDueDate.toISOString().slice(0, 10)
+
+        if (ASAAS_API_KEY && club.billing?.asaasSubscriptionId && !club.demoMode) {
+          // Atualiza a recorrência futura no Asaas.
+          await asaasRequest(
+            '/subscriptions/' + encodeURIComponent(club.billing.asaasSubscriptionId),
+            {
+              method: 'PUT',
+              body: {
+                nextDueDate: newDueDateISO,
+                updatePendingPayments: true,
+              },
+            },
+          )
+
+          // A alteração da assinatura não muda uma cobrança que já foi gerada.
+          // Se houver uma cobrança aberta/vencida, ajustamos o vencimento dela também.
+          try {
+            const list = await asaasRequest(
+              '/subscriptions/' + encodeURIComponent(club.billing.asaasSubscriptionId) + '/payments',
+            )
+            const payments = Array.isArray(list?.data) ? list.data : []
+            const editablePayment = payments
+              .filter((payment) => ['PENDING', 'OVERDUE'].includes(payment.status))
+              .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')))[0]
+
+            if (editablePayment?.id) {
+              const remotePayment = await asaasRequest(
+                '/payments/' + encodeURIComponent(editablePayment.id),
+              )
+
+              await asaasRequest(
+                '/payments/' + encodeURIComponent(editablePayment.id),
+                {
+                  method: 'PUT',
+                  body: {
+                    billingType: remotePayment.billingType || 'PIX',
+                    value: Number(remotePayment.value || club.plan?.price || 49.9),
+                    dueDate: newDueDateISO,
+                    description: remotePayment.description || 'Assinatura mensal EspaçoOn',
+                  },
+                },
+              )
+
+              club.billing.currentPaymentId = editablePayment.id
+              club.billing.currentPaymentDueDate = newDueDate
+            }
+          } catch (paymentSyncError) {
+            console.warn(
+              'Vencimento da assinatura atualizado, mas a cobrança atual não pôde ser ajustada:',
+              paymentSyncError?.message || paymentSyncError,
+            )
+          }
+        }
+
+        club.billing.nextDueDate = newDueDate
+        club.billing.graceUntil = null
+
+        // Se o novo vencimento está no futuro, o clube deixa de aparecer como vencido.
+        if (!club.demoMode && ['past_due', 'suspended'].includes(club.billing.status)) {
+          club.billing.status = 'active'
+          if (club.system?.status === 'suspended') club.system.status = 'active'
+        }
+      }
     }
 
     await club.save()
