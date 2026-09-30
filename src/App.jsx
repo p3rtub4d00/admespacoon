@@ -981,7 +981,9 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
                     }}
                   >
                     <option value="asaas">Asaas</option>
-                    <option value="mercadopago" disabled>Mercado Pago — preparação</option>
+                    <option value="mercadopago" disabled={!data?.mercadopago?.connected}>
+                      {data?.mercadopago?.connected ? 'Mercado Pago' : 'Mercado Pago — conecte a conta primeiro'}
+                    </option>
                   </select>
                 </label>
 
@@ -989,13 +991,64 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
                   <strong>
                     {(club.reservationPaymentProvider || 'asaas') === 'asaas'
                       ? 'Asaas ativo para reservas'
-                      : 'Mercado Pago selecionado'}
+                      : 'Mercado Pago ativo para reservas'}
                   </strong>
                   <span>
                     A mensalidade do EspaçoOn continua separada e permanece no Asaas.
-                    O Mercado Pago será liberado somente após a próxima etapa da integração.
                   </span>
                 </div>
+              </div>
+
+              <div className="mercadopago-connection">
+                <div>
+                  <span>Mercado Pago</span>
+                  <strong>
+                    {!data?.mercadopago?.platformConfigured
+                      ? 'Integração ainda não configurada no Master'
+                      : data?.mercadopago?.connected
+                        ? 'Conta conectada'
+                        : 'Conta não conectada'}
+                  </strong>
+                  {data?.mercadopago?.connected && (
+                    <small>
+                      ID do vendedor: {data.mercadopago.userId}
+                      {data.mercadopago.expiresAt ? ' • renovação até ' + dateBR(data.mercadopago.expiresAt) : ''}
+                    </small>
+                  )}
+                </div>
+
+                {data?.mercadopago?.connected ? (
+                  <button
+                    className="danger-outline"
+                    onClick={async () => {
+                      if (!confirm('Desconectar a conta Mercado Pago deste cliente? O provedor de reservas voltará para Asaas.')) return
+                      await act(
+                        () => api.disconnectMercadoPago(club.id),
+                        'Mercado Pago desconectado.',
+                      )
+                      await load()
+                    }}
+                  >
+                    Desconectar
+                  </button>
+                ) : (
+                  <button
+                    disabled={!data?.mercadopago?.platformConfigured}
+                    onClick={async () => {
+                      setError('')
+                      try {
+                        const result = await api.connectMercadoPago(club.id)
+                        if (!result?.authorizationUrl) throw new Error('Link de autorização não recebido.')
+                        window.location.href = result.authorizationUrl
+                      } catch (err) {
+                        setError(err.message)
+                      }
+                    }}
+                  >
+                    Conectar Mercado Pago
+                  </button>
+                )}
+              </div>
               </div>
             </section>
 
