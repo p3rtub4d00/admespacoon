@@ -427,13 +427,16 @@ async function createMercadoPagoAuthorization(club, returnUrl = '') {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: MERCADOPAGO_CLIENT_ID,
+    platform_id: 'mp',
     redirect_uri: MERCADOPAGO_REDIRECT_URI,
     state,
     code_challenge: challenge,
     code_challenge_method: 'S256',
   })
 
-  return 'https://auth.mercadopago.com/authorization?' + params.toString()
+  // Para contas brasileiras, usamos o endpoint regional documentado para Marketplace/OAuth.
+  // Isso também evita inconsistências de redirecionamento em navegadores móveis.
+  return 'https://auth.mercadopago.com.br/authorization?' + params.toString()
 }
 
 async function disconnectMercadoPagoForClub(club) {
