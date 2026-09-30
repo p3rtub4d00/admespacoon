@@ -1480,7 +1480,7 @@ app.post('/api/license/mercadopago/orders/card', authenticateClubLicense, writeL
     const totalAmount = amount.toFixed(2)
     const order = await mercadoPagoApiRequest(club, '/v1/orders', {
       method: 'POST',
-      idempotencyKey: stableUuid(club.id + ':card:' + externalReference),
+      idempotencyKey: stableUuid(club.id + ':card:' + externalReference + ':' + token),
       body: {
         type: 'online',
         total_amount: totalAmount,
