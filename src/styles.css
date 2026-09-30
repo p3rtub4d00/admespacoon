@@ -938,3 +938,71 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
   color: #6847b5;
   background: #f7f3ff;
 }
+
+
+/* Reservation payment provider */
+.payment-provider-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #e7eff4;
+}
+
+.payment-provider-control {
+  display: grid;
+  grid-template-columns: minmax(240px, 360px) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.payment-provider-control label {
+  color: #5b717d;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.payment-provider-control select {
+  width: 100%;
+  min-height: 43px;
+  margin-top: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: 0;
+  color: #294553;
+  background: #fbfdff;
+}
+
+.payment-provider-control select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(31,142,250,.08);
+}
+
+.payment-provider-note {
+  padding: 12px 14px;
+  border: 1px solid #d7e8f4;
+  border-radius: 11px;
+  background: #f6fbff;
+}
+
+.payment-provider-note strong,
+.payment-provider-note span {
+  display: block;
+}
+
+.payment-provider-note strong {
+  color: #315b79;
+  font-size: 10px;
+}
+
+.payment-provider-note span {
+  margin-top: 5px;
+  color: #718794;
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+@media (max-width: 720px) {
+  .payment-provider-control {
+    grid-template-columns: 1fr;
+  }
+}
