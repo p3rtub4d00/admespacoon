@@ -79,6 +79,12 @@ const clubSchema = new mongoose.Schema({
   city: String,
   state: String,
   demoMode: { type: Boolean, default: false, index: true },
+  reservationPaymentProvider: {
+    type: String,
+    enum: ['asaas', 'mercadopago'],
+    default: 'asaas',
+    index: true,
+  },
   plan: {
     name: { type: String, default: 'EspaçoOn' },
     price: { type: Number, default: 49.9 },
@@ -595,6 +601,7 @@ function publicClub(club) {
     city: club.city,
     state: club.state,
     demoMode: club.demoMode === true,
+    reservationPaymentProvider: club.reservationPaymentProvider || 'asaas',
     plan: club.plan,
     billing: club.billing,
     system: club.system,
@@ -1032,6 +1039,33 @@ app.post('/api/master/clubs/:id/demo-mode', requireMaster, writeLimiter, async (
   }
 })
 
+app.post('/api/master/clubs/:id/payment-provider', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const provider = text(req.body?.provider, 30).toLowerCase()
+    if (!['asaas', 'mercadopago'].includes(provider)) {
+      return res.status(400).json({ error: 'Provedor de pagamento inválido.' })
+    }
+
+    const previousProvider = club.reservationPaymentProvider || 'asaas'
+    club.reservationPaymentProvider = provider
+    await club.save()
+
+    await logAction(
+      'club.payment_provider_changed',
+      'Provedor de recebimento das reservas alterado.',
+      club,
+      { previousProvider, provider },
+    )
+
+    res.json(publicClub(club))
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.post('/api/master/clubs/:id/status', requireMaster, writeLimiter, async (req, res, next) => {
   try {
     const club = await Club.findOne({ id: req.params.id })
@@ -1410,6 +1444,7 @@ app.get('/api/license/status', publicLicenseLimiter, async (req, res, next) => {
       demoMode: club.demoMode === true,
       status: club.demoMode ? 'demo' : club.system.status,
       billingStatus: club.demoMode ? 'demo' : club.billing.status,
+      paymentProvider: club.reservationPaymentProvider || 'asaas',
       nextDueDate: club.billing.nextDueDate,
       temporaryUnlockUntil: club.system.temporaryUnlockUntil,
       club: {
