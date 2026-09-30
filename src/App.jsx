@@ -981,17 +981,15 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
                     }}
                   >
                     <option value="asaas">Asaas</option>
-                    <option value="mercadopago" disabled={!data?.mercadopago?.connected}>
-                      {data?.mercadopago?.connected ? 'Mercado Pago' : 'Mercado Pago — conecte a conta primeiro'}
-                    </option>
+                    <option value="mercadopago">Mercado Pago</option>
                   </select>
                 </label>
 
                 <div className="payment-provider-note">
                   <strong>
                     {(club.reservationPaymentProvider || 'asaas') === 'asaas'
-                      ? 'Asaas ativo para reservas'
-                      : 'Mercado Pago ativo para reservas'}
+                      ? 'Asaas selecionado para novas reservas'
+                      : 'Mercado Pago selecionado para novas reservas'}
                   </strong>
                   <span>
                     A mensalidade do EspaçoOn continua separada e permanece no Asaas.
@@ -1004,10 +1002,12 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
                   <span>Mercado Pago</span>
                   <strong>
                     {!data?.mercadopago?.platformConfigured
-                      ? 'Integração ainda não configurada no Master'
+                      ? 'Integração ainda não configurada'
                       : data?.mercadopago?.connected
-                        ? 'Conta conectada'
-                        : 'Conta não conectada'}
+                        ? 'Conta do proprietário conectada'
+                        : (club.reservationPaymentProvider || 'asaas') === 'mercadopago'
+                          ? 'Aguardando o proprietário conectar pelo painel do clube'
+                          : 'Não conectado'}
                   </strong>
                   {data?.mercadopago?.connected && (
                     <small>
@@ -1016,38 +1016,6 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
                     </small>
                   )}
                 </div>
-
-                {data?.mercadopago?.connected ? (
-                  <button
-                    className="danger-outline"
-                    onClick={async () => {
-                      if (!confirm('Desconectar a conta Mercado Pago deste cliente? O provedor de reservas voltará para Asaas.')) return
-                      await act(
-                        () => api.disconnectMercadoPago(club.id),
-                        'Mercado Pago desconectado.',
-                      )
-                      await load()
-                    }}
-                  >
-                    Desconectar
-                  </button>
-                ) : (
-                  <button
-                    disabled={!data?.mercadopago?.platformConfigured}
-                    onClick={async () => {
-                      setError('')
-                      try {
-                        const result = await api.connectMercadoPago(club.id)
-                        if (!result?.authorizationUrl) throw new Error('Link de autorização não recebido.')
-                        window.location.href = result.authorizationUrl
-                      } catch (err) {
-                        setError(err.message)
-                      }
-                    }}
-                  >
-                    Conectar Mercado Pago
-                  </button>
-                )}
               </div>
             </section>
 
