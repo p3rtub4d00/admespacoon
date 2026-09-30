@@ -1510,6 +1510,144 @@ app.get('/api/license/mercadopago/config', authenticateClubLicense, async (req, 
 })
 
 
+app.post('/api/license/mercadopago/checkout/preferences', authenticateClubLicense, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.club.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    if ((club.reservationPaymentProvider || 'asaas') !== 'mercadopago') {
+      return res.status(409).json({ error: 'Mercado Pago não está selecionado para este clube.' })
+    }
+
+    const amount = Number(req.body?.amount)
+    const externalReference = text(req.body?.externalReference, 64)
+    const payerEmail = text(req.body?.payerEmail, 160).toLowerCase()
+    const description = text(req.body?.description, 160)
+    const successUrl = safeReturnUrl(req.body?.successUrl)
+    const pendingUrl = safeReturnUrl(req.body?.pendingUrl)
+    const failureUrl = safeReturnUrl(req.body?.failureUrl)
+
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) {
+      return res.status(400).json({ error: 'Valor da cobrança inválido.' })
+    }
+    if (!externalReference) {
+      return res.status(400).json({ error: 'Referência da cobrança não informada.' })
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail)) {
+      return res.status(400).json({ error: 'E-mail do pagador inválido.' })
+    }
+    if (!successUrl || !pendingUrl || !failureUrl) {
+      return res.status(400).json({ error: 'URLs de retorno do checkout inválidas.' })
+    }
+
+    const preference = await mercadoPagoApiRequest(club, '/checkout/preferences', {
+      method: 'POST',
+      body: {
+        items: [
+          {
+            id: externalReference,
+            title: description || ('Reserva EspaçoOn ' + externalReference),
+            quantity: 1,
+            currency_id: 'BRL',
+            unit_price: Number(amount.toFixed(2)),
+          },
+        ],
+        payer: {
+          email: payerEmail,
+        },
+        external_reference: externalReference,
+        back_urls: {
+          success: successUrl,
+          pending: pendingUrl,
+          failure: failureUrl,
+        },
+        auto_return: 'approved',
+        payment_methods: {
+          excluded_payment_types: [
+            { id: 'ticket' },
+            { id: 'bank_transfer' },
+            { id: 'debit_card' },
+          ],
+          installments: 12,
+        },
+        statement_descriptor: 'ESPACOON',
+      },
+    })
+
+    if (!preference?.id || !preference?.init_point) {
+      throw Object.assign(new Error('O Mercado Pago não retornou o link do checkout.'), { statusCode: 502 })
+    }
+
+    await logAction(
+      'club.mercadopago_checkout_preference_created',
+      'Checkout Pro criado para uma reserva.',
+      club,
+      {
+        externalReference,
+        preferenceId: preference.id,
+        amount,
+      },
+    )
+
+    res.status(201).json({
+      preferenceId: preference.id,
+      checkoutUrl: preference.init_point,
+      sandboxCheckoutUrl: preference.sandbox_init_point || null,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/license/mercadopago/payments/by-reference/:externalReference', authenticateClubLicense, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.club.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const externalReference = text(req.params.externalReference, 64)
+    if (!externalReference) {
+      return res.status(400).json({ error: 'Referência da cobrança não informada.' })
+    }
+
+    const search = await mercadoPagoApiRequest(
+      club,
+      '/v1/payments/search?external_reference=' + encodeURIComponent(externalReference) +
+        '&sort=date_created&criteria=desc&limit=20',
+    )
+
+    const results = Array.isArray(search?.results) ? search.results : []
+    const matches = results.filter(
+      (payment) => String(payment?.external_reference || '') === externalReference,
+    )
+
+    const payment =
+      matches.find((item) => item.status === 'approved') ||
+      matches.find((item) => item.status === 'in_process') ||
+      matches.find((item) => item.status === 'pending') ||
+      matches[0] ||
+      null
+
+    if (!payment?.id) {
+      return res.json({ found: false })
+    }
+
+    res.json({
+      found: true,
+      paymentId: String(payment.id),
+      status: payment.status || null,
+      statusDetail: payment.status_detail || null,
+      externalReference: payment.external_reference || null,
+      amount: Number(payment.transaction_amount || 0),
+      paymentMethodId: payment.payment_method_id || null,
+      paymentTypeId: payment.payment_type_id || null,
+      dateApproved: payment.date_approved || null,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+
 app.post('/api/license/mercadopago/orders/card', authenticateClubLicense, writeLimiter, async (req, res, next) => {
   try {
     const club = await Club.findOne({ id: req.club.id })
