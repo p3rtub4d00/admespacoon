@@ -51,6 +51,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     }),
+  setPaymentProvider: (id, provider) =>
+    request('/api/master/clubs/' + encodeURIComponent(id) + '/payment-provider', {
+      method: 'POST',
+      body: JSON.stringify({ provider }),
+    }),
   setClubStatus: (id, systemStatus, reason) =>
     request('/api/master/clubs/' + encodeURIComponent(id) + '/status', {
       method: 'POST',
