@@ -453,6 +453,102 @@ async function disconnectMercadoPagoForClub(club) {
   return club
 }
 
+async function ensureFreshMercadoPagoAccessToken(club) {
+  const mp = club?.payments?.mercadoPago || {}
+  if (!mp.accessTokenEncrypted) {
+    throw Object.assign(new Error('Conta Mercado Pago ainda não conectada.'), { statusCode: 409 })
+  }
+
+  const expiresAt = mp.expiresAt ? new Date(mp.expiresAt) : null
+  const shouldRefresh = Boolean(
+    expiresAt &&
+    Number.isFinite(expiresAt.getTime()) &&
+    expiresAt.getTime() - Date.now() < 10 * 60 * 1000
+  )
+
+  if (!shouldRefresh) {
+    return decryptSecret(mp.accessTokenEncrypted)
+  }
+
+  if (!mp.refreshTokenEncrypted) {
+    throw Object.assign(new Error('A autorização do Mercado Pago expirou. Reconecte a conta.'), { statusCode: 409 })
+  }
+
+  const refreshed = await mercadoPagoTokenRequest({
+    client_id: MERCADOPAGO_CLIENT_ID,
+    client_secret: MERCADOPAGO_CLIENT_SECRET,
+    grant_type: 'refresh_token',
+    refresh_token: decryptSecret(mp.refreshTokenEncrypted),
+  })
+
+  if (!refreshed?.access_token) {
+    throw Object.assign(new Error('Não foi possível renovar o acesso ao Mercado Pago.'), { statusCode: 502 })
+  }
+
+  const now = new Date()
+  const expiresIn = Number(refreshed.expires_in || 0)
+  club.payments = club.payments || {}
+  club.payments.mercadoPago = {
+    userId: String(refreshed.user_id || mp.userId || ''),
+    publicKey: refreshed.public_key || mp.publicKey || '',
+    accessTokenEncrypted: encryptSecret(refreshed.access_token),
+    refreshTokenEncrypted: refreshed.refresh_token
+      ? encryptSecret(refreshed.refresh_token)
+      : mp.refreshTokenEncrypted,
+    scope: refreshed.scope || mp.scope || '',
+    liveMode: refreshed.live_mode === true || mp.liveMode === true,
+    expiresAt: expiresIn > 0 ? new Date(now.getTime() + expiresIn * 1000) : mp.expiresAt || null,
+    connectedAt: mp.connectedAt || now,
+    updatedAt: now,
+  }
+  await club.save()
+
+  return refreshed.access_token
+}
+
+async function mercadoPagoApiRequest(club, pathname, options = {}) {
+  const accessToken = await ensureFreshMercadoPagoAccessToken(club)
+
+  const response = await fetch('https://api.mercadopago.com' + pathname, {
+    method: options.method || 'GET',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      authorization: 'Bearer ' + accessToken,
+      ...(options.idempotencyKey ? { 'x-idempotency-key': options.idempotencyKey } : {}),
+    },
+    ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+  })
+
+  const data = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    const message =
+      data?.message ||
+      data?.error ||
+      data?.cause?.[0]?.description ||
+      data?.cause?.[0]?.code ||
+      'Erro na API do Mercado Pago.'
+    throw Object.assign(new Error(String(message)), {
+      statusCode: response.status >= 500 ? 502 : response.status,
+      mercadoPagoResponse: data,
+    })
+  }
+
+  return data
+}
+
+function stableUuid(value) {
+  const hex = crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 32)
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    '4' + hex.slice(13, 16),
+    'a' + hex.slice(17, 20),
+    hex.slice(20, 32),
+  ].join('-')
+}
+
 async function mercadoPagoTokenRequest(body) {
   const response = await fetch('https://api.mercadopago.com/oauth/token', {
     method: 'POST',
@@ -1251,6 +1347,118 @@ app.post('/api/license/mercadopago/disconnect', authenticateClubLicense, writeLi
     res.json({
       ok: true,
       mercadopago: mercadoPagoConnectionInfo(club),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+
+app.post('/api/license/mercadopago/orders', authenticateClubLicense, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.club.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    if ((club.reservationPaymentProvider || 'asaas') !== 'mercadopago') {
+      return res.status(409).json({ error: 'Mercado Pago não está selecionado para este clube.' })
+    }
+
+    const amount = Number(req.body?.amount)
+    const externalReference = text(req.body?.externalReference, 64)
+    const payerEmail = text(req.body?.payerEmail, 160).toLowerCase()
+    const description = text(req.body?.description, 160)
+
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) {
+      return res.status(400).json({ error: 'Valor da cobrança inválido.' })
+    }
+    if (!externalReference) {
+      return res.status(400).json({ error: 'Referência da cobrança não informada.' })
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail)) {
+      return res.status(400).json({ error: 'E-mail do pagador inválido.' })
+    }
+
+    const totalAmount = amount.toFixed(2)
+    const order = await mercadoPagoApiRequest(club, '/v1/orders', {
+      method: 'POST',
+      idempotencyKey: stableUuid(club.id + ':' + externalReference),
+      body: {
+        type: 'online',
+        total_amount: totalAmount,
+        external_reference: externalReference,
+        processing_mode: 'automatic',
+        description: description || ('Reserva EspaçoOn ' + externalReference),
+        payer: {
+          email: payerEmail,
+        },
+        transactions: {
+          payments: [
+            {
+              amount: totalAmount,
+              payment_method: {
+                id: 'pix',
+                type: 'bank_transfer',
+              },
+              expiration_time: 'PT30M',
+            },
+          ],
+        },
+      },
+    })
+
+    const payment = order?.transactions?.payments?.[0] || {}
+    const method = payment?.payment_method || {}
+
+    await logAction(
+      'club.mercadopago_order_created',
+      'Cobrança Pix Mercado Pago criada para uma reserva.',
+      club,
+      {
+        externalReference,
+        orderId: order?.id || null,
+        paymentId: payment?.id || null,
+        amount,
+      },
+    )
+
+    res.status(201).json({
+      orderId: order?.id || null,
+      paymentId: payment?.id || null,
+      status: order?.status || payment?.status || null,
+      statusDetail: order?.status_detail || payment?.status_detail || null,
+      qrCode: method?.qr_code || null,
+      qrCodeBase64: method?.qr_code_base64 || null,
+      ticketUrl: method?.ticket_url || null,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/license/mercadopago/orders/:orderId', authenticateClubLicense, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.club.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    const orderId = text(req.params.orderId, 120)
+    if (!orderId) return res.status(400).json({ error: 'Order inválida.' })
+
+    const order = await mercadoPagoApiRequest(
+      club,
+      '/v1/orders/' + encodeURIComponent(orderId),
+    )
+
+    const payment = order?.transactions?.payments?.[0] || {}
+    const method = payment?.payment_method || {}
+
+    res.json({
+      orderId: order?.id || orderId,
+      paymentId: payment?.id || null,
+      status: order?.status || payment?.status || null,
+      statusDetail: order?.status_detail || payment?.status_detail || null,
+      qrCode: method?.qr_code || null,
+      qrCodeBase64: method?.qr_code_base64 || null,
+      ticketUrl: method?.ticket_url || null,
     })
   } catch (error) {
     next(error)
