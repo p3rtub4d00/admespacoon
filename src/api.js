@@ -36,6 +36,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+  registrationInvites: () => request('/api/master/registration-invites'),
+  createRegistrationInvite: () => request('/api/master/registration-invites', { method: 'POST' }),
+  revokeRegistrationInvite: id => request('/api/master/registration-invites/' + encodeURIComponent(id), { method: 'DELETE' }),
+  registrationInfo: token => request('/api/registration/info', { method: 'POST', credentials: 'omit', body: JSON.stringify({ token }) }),
+  completeRegistration: payload => request('/api/registration/complete', { method: 'POST', credentials: 'omit', body: JSON.stringify(payload) }),
   clubs: () => request('/api/master/clubs'),
   clubDetails: (id) =>
     request('/api/master/clubs/' + encodeURIComponent(id) + '/details'),

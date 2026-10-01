@@ -1,3 +1,4 @@
+import { installRegistrationInvites } from './registration-invites.js'
 import { demoEventRecord, demoAnalyticsSummary, analyticsDay, daysBefore } from './demo-analytics.js'
 import { parseDueDate, nextDueDateFromDay, requireCurrentOrFutureDate } from './billing-dates.js'
 import { buildPrivacyPolicy, sanitizePrivacyConfig } from './privacy.js'
@@ -1617,13 +1618,21 @@ app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) =
   }
 })
 
+const RegistrationInvite = installRegistrationInvites({ app, mongoose, requireMaster, writeLimiter, validateClubInput })
+
 app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next) => {
   try {
+    let invitation = null
+    if (req.body?.registrationInviteId) {
+      if (typeof req.body.registrationInviteId !== 'string' || req.body.registrationInviteId.length > 80) return res.status(400).json({ error: 'Convite inválido.' })
+      invitation = await RegistrationInvite.findOne({ id: req.body.registrationInviteId, submittedAt: { $ne: null }, revokedAt: null, approvedAt: null })
+      if (!invitation) return res.status(409).json({ error: 'Cadastro já concluído ou convite indisponível.' })
+    }
     const input = validateClubInput(req.body)
     if (input.nextDueDate) requireCurrentOrFutureDate(input.nextDueDate)
     const masterSettings = await getMasterSettings()
     const licenseKey = generateLicenseKey()
-    const id = randomId('CLB')
+    const id = invitation?.clubId || randomId('CLB')
 
     let slug = slugify(input.establishmentName) || id.toLowerCase()
     if (await Club.exists({ slug })) slug += '-' + crypto.randomBytes(2).toString('hex')
@@ -1652,6 +1661,8 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
       licenseKeyHash: hashLicense(licenseKey),
     })
 
+    if (invitation) await RegistrationInvite.updateOne({ id: invitation.id }, { $set: { approvedAt: new Date() } })
+
     await logAction('club.created', 'Novo cliente cadastrado no EspaçoOn Master.', club)
 
     if (ASAAS_API_KEY && club.cpfCnpj && !club.demoMode) {
@@ -1671,6 +1682,7 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
     res.setHeader('Cache-Control', 'no-store')
     res.status(201).json({ club: publicClub(club), licenseKey })
   } catch (error) {
+    if (req.body?.registrationInviteId && error?.code === 11000) return res.status(409).json({ error: 'Este cadastro já foi concluído. Atualize a lista de clubes.' })
     next(error)
   }
 })
@@ -3220,7 +3232,9 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.use((error, _req, res, _next) => {
-  console.error(error)
+  if (_req.path.startsWith('/api/registration')) {
+    if (!error.statusCode || error.statusCode >= 500) console.error('Falha no cadastro por convite.')
+  } else console.error(error)
   const status = Number(error?.statusCode) || 500
   res.status(status).json({
     error: status >= 500 ? 'Erro interno do servidor.' : error.message,
