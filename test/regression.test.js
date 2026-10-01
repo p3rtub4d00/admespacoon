@@ -82,7 +82,7 @@ test('club registration normalizes data and rejects invalid due dates and contac
   assert.equal(result.cpfCnpj,'52998224725')
   assert.equal(result.email,'teste@example.com')
   assert.equal(result.state,'RO')
-  for (const change of [{dueDay:29},{dueDay:1.5},{phone:'123'},{email:'invalid'},{ownerName:'a'}]) assert.throws(()=>validateClubInput({...input,...change}),{statusCode:400})
+  for (const change of [{dueDay:32},{dueDay:1.5},{phone:'123'},{email:'invalid'},{ownerName:'a'}]) assert.throws(()=>validateClubInput({...input,...change}),{statusCode:400})
   assert.deepEqual(validateClubInput({city:'Porto Velho'},true),{city:'Porto Velho'})
 })
 

@@ -48,6 +48,11 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
+  deleteClub: (id, confirmation) =>
+    request('/api/master/clubs/' + encodeURIComponent(id), {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmation }),
+    }),
   setDemoMode: (id, enabled) =>
     request('/api/master/clubs/' + encodeURIComponent(id) + '/demo-mode', {
       method: 'POST',
