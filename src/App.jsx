@@ -156,7 +156,11 @@ function AdminAccessPage({ token }) {
     setBusy(true)
     setError('')
     try {
-      await api.completeAdminAccess(token, password, confirmation)
+      const result = await api.completeAdminAccess(token, password, confirmation)
+      setInfo(current => ({ ...current, adminUrl: result.adminUrl }))
+      setPassword('')
+      setConfirmation('')
+      window.history.replaceState({}, '', window.location.pathname)
       setDone(true)
     } catch (err) {
       setError(err.message)
@@ -223,6 +227,8 @@ function AdminAccessPage({ token }) {
           </form>
         )}
 
+        {done && info?.adminUrl && <a className="access-panel-link" href={info.adminUrl}>Abrir painel do clube</a>}
+        {done && !info?.adminUrl && <p>Solicite o endereço do painel ao administrador do ClubeOn.</p>}
         {!busy && !info && error && <div className="form-error">{error}</div>}
       </div>
     </div>
@@ -239,6 +245,8 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa�
     city: club?.city || '',
     state: club?.state || '',
     dueDay: club?.billing?.dueDay || 10,
+    systemUrl: club?.system?.publicUrl || '',
+    demoMode: club?.demoMode === true,
   })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -308,6 +316,16 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa�
               onChange={(e) => setForm({ ...form, dueDay: e.target.value })} />
           </label>
 
+          <label className="full">Endereço do sistema do clube
+            <input type="url" placeholder="https://meu-clube.onrender.com" value={form.systemUrl}
+              onChange={(e) => setForm({ ...form, systemUrl: e.target.value })} />
+            <small>Pode preencher depois que o sistema estiver publicado.</small>
+          </label>
+          {!club && <label className="full demo-create-option">
+            <input type="checkbox" checked={form.demoMode} onChange={(e) => setForm({ ...form, demoMode: e.target.checked })} />
+            Criar em demonstração, com pagamentos simulados e painel sem senha
+          </label>}
+
           <div className="plan-preview">
             <CreditCard />
             <div>
@@ -330,11 +348,15 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa�
 
 function LicenseModal({ data, onClose }) {
   const [copied, setCopied] = useState('')
+  const [copyError, setCopyError] = useState('')
   if (!data?.licenseKey) return null
   const copy = async (value, key) => {
-    await navigator.clipboard.writeText(value)
-    setCopied(key)
-    setTimeout(() => setCopied(''), 1600)
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopyError('')
+      setCopied(key)
+      setTimeout(() => setCopied(''), 1600)
+    } catch { setCopyError('Não foi possível copiar. Selecione e copie o texto exibido.') }
   }
 
   return (
@@ -362,6 +384,15 @@ function LicenseModal({ data, onClose }) {
             </>
           )}
         </div>
+        <p>Use um serviço e um banco exclusivos para este clube. O cadastro no Master é o primeiro passo da instalação.</p>
+        <div className="license-data">
+          <span>Configuração da licença no serviço do clube</span>
+          <pre>{`MASTER_API_URL=${window.location.origin}\nMASTER_CLUB_ID=${data.club.id}\nMASTER_LICENSE_KEY=${data.licenseKey}`}</pre>
+        </div>
+        <button className="primary-wide" onClick={() => copy(`MASTER_API_URL=${window.location.origin}\nMASTER_CLUB_ID=${data.club.id}\nMASTER_LICENSE_KEY=${data.licenseKey}`, 'config')}>
+          {copied === 'config' ? 'Configuração copiada' : 'Copiar configuração da licença'}
+        </button>
+        {copyError && <div className="form-error">{copyError}</div>}
         <button className="primary-wide" onClick={() => copy(data.licenseKey, 'license')}>
           {copied === 'license' ? 'Chave copiada' : 'Copiar chave'}
         </button>
@@ -376,7 +407,7 @@ function LicenseModal({ data, onClose }) {
 }
 
 export default function App() {
-  const adminAccessToken = new URLSearchParams(window.location.search).get('adminAccessToken') || ''
+  const [adminAccessToken] = useState(() => new URLSearchParams(window.location.search).get('adminAccessToken') || '')
   const [sessionChecked, setSessionChecked] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
   const [active, setActive] = useState('dashboard')
@@ -738,9 +769,12 @@ export default function App() {
           onSaved={async (result) => {
             setModalClub(undefined)
             if (result?.licenseKey && result?.club?.id) {
+              setLicenseData(result)
               try {
-                const access = await api.createAdminAccessLink(result.club.id, 'first-access')
-                setLicenseData({ ...result, adminAccessUrl: access.url })
+                if (!result.club.demoMode) {
+                  const access = await api.createAdminAccessLink(result.club.id, 'first-access')
+                  setLicenseData({ ...result, adminAccessUrl: access.url })
+                }
               } catch {
                 setLicenseData(result)
               }
@@ -1082,6 +1116,31 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
               <div><span>Localidade</span><strong>{[club.city, club.state].filter(Boolean).join(' / ') || 'Não informada'}</strong></div>
               <div><span>Cadastrado em</span><strong>{dateTimeBR(club.createdAt)}</strong></div>
             </div>
+
+            <section className="provisioning-section">
+              <div className="detail-section-head">
+                <div><span>Preparação do cliente</span><h3>{club.provisioning?.ready ? 'Pronto para entrega' : 'Configuração pendente'}</h3></div>
+                <button className="secondary" onClick={load} disabled={busy}>{busy ? 'Atualizando...' : 'Atualizar status'}</button>
+              </div>
+              <ul className="provisioning-checks">
+                {(club.provisioning?.checks || []).map(item => <li key={item.id} className={item.complete ? 'complete' : ''}>
+                  <CheckCircle2 size={17} /><span>{item.label}</span><strong>{item.complete ? 'Concluído' : 'Pendente'}</strong>
+                </li>)}
+              </ul>
+              {!club.provisioning?.active && <p>O clube está bloqueado. Regularize o acesso antes de entregá-lo.</p>}
+              <p>Última atualização do sistema: {dateTimeBR(club.provisioning?.reportedAt)}. Abra o painel do clube para atualizar a conexão; o status pode levar até 5 minutos.</p>
+              {club.provisioning?.adminUrl && <a className="access-panel-link" href={club.provisioning.adminUrl} target="_blank" rel="noreferrer">Abrir painel do clube</a>}
+              <details><summary>Como instalar um novo clube</summary>
+                <ol>
+                  <li>Crie um Web Service no Render usando o repositório Espa-oOn e a branch main.</li>
+                  <li>Use um banco MongoDB exclusivo para este clube e um JWT_SECRET exclusivo. Não copie o banco do piloto nem do Master.</li>
+                  <li>Configure a licença com o Club ID e a chave exibidos no cadastro. A chave não pode ser recuperada; use a renovação somente se a tiver perdido.</li>
+                  <li>Configure o recebimento do clube, faça o deploy e cadastre o endereço HTTPS em Editar cadastro.</li>
+                  <li>Gere o link de primeiro acesso quando for entregar ao proprietário. Ele expira em 30 minutos.</li>
+                  <li>Peça ao proprietário para preencher os dados e os preços; valide uma reserva de demonstração antes da entrega.</li>
+                </ol>
+              </details>
+            </section>
 
             <section className="payment-provider-section">
               <div className="detail-section-head">

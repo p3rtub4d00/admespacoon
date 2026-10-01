@@ -1,3 +1,4 @@
+import { normalizeSystemUrl, adminPanelUrl, parseSetupReport, provisioningSummary } from './provisioning.js'
 import express from 'express'
 import mongoose from 'mongoose'
 import cookieParser from 'cookie-parser'
@@ -151,8 +152,15 @@ const clubSchema = new mongoose.Schema({
       default: 'active',
       index: true,
     },
+    publicUrl: { type: String, default: '' },
     lastSeen: Date,
     temporaryUnlockUntil: Date,
+  },
+  provisioning: {
+    establishmentConfigured: Boolean,
+    pricesConfigured: Boolean,
+    asaasConfigured: Boolean,
+    reportedAt: Date,
   },
   adminAuth: {
     passwordHash: String,
@@ -998,6 +1006,7 @@ async function ensureAsaasCustomer(club) {
 }
 
 async function ensureAsaasSubscription(club) {
+  if (club.demoMode) throw Object.assign(new Error('Demonstração não permite assinatura real.'), { statusCode: 409 })
   if (club.billing?.asaasSubscriptionId) return club.billing.asaasSubscriptionId
 
   const customerId = await ensureAsaasCustomer(club)
@@ -1113,7 +1122,6 @@ async function logAction(action, description, club = null, metadata = null) {
 async function refreshClubStatus(club) {
   if (!club || club.billing?.status === 'cancelled' || club.system?.status === 'cancelled') return club
   if (club.demoMode === true) {
-    club.system.lastSeen = club.system.lastSeen || new Date()
     await club.save()
     return club
   }
@@ -1166,6 +1174,12 @@ function effectiveAccess(club) {
 
 function validateClubInput(body, partial = false) {
   const result = {}
+  if (!body || typeof body !== 'object') throw Object.assign(new Error('Cadastro inválido.'), { statusCode: 400 })
+  if (body.systemUrl !== undefined) result.systemUrl = normalizeSystemUrl(body.systemUrl)
+  if (!partial && body.demoMode !== undefined) {
+    if (typeof body.demoMode !== 'boolean') throw Object.assign(new Error('Modo demonstração inválido.'), { statusCode: 400 })
+    result.demoMode = body.demoMode
+  }
 
   if (!partial || body.establishmentName !== undefined) {
     result.establishmentName = text(body.establishmentName, 120)
@@ -1231,6 +1245,7 @@ function publicClub(club) {
     plan: club.plan,
     billing: club.billing,
     system: club.system,
+    provisioning: provisioningSummary(club, { mercadoPagoConnected: mercadoPagoConnectionInfo(club).connected, active: effectiveAccess(club) }),
     adminPasswordConfigured: Boolean(club.adminAuth?.passwordHash && club.adminAuth?.passwordSalt),
     adminPasswordSetAt: club.adminAuth?.passwordSetAt || null,
     createdAt: club.createdAt,
@@ -1545,13 +1560,14 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
         nextDueDate: nextDueDateFromDay(input.dueDay),
         status: 'active',
       },
-      system: { status: 'active' },
+      demoMode: input.demoMode === true,
+      system: { status: 'active', publicUrl: input.systemUrl || '' },
       licenseKeyHash: hashLicense(licenseKey),
     })
 
     await logAction('club.created', 'Novo cliente cadastrado no EspaçoOn Master.', club)
 
-    if (ASAAS_API_KEY && club.cpfCnpj) {
+    if (ASAAS_API_KEY && club.cpfCnpj && !club.demoMode) {
       try {
         await ensureAsaasSubscription(club)
       } catch (billingError) {
@@ -1565,6 +1581,7 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
       }
     }
 
+    res.setHeader('Cache-Control', 'no-store')
     res.status(201).json({ club: publicClub(club), licenseKey })
   } catch (error) {
     next(error)
@@ -1600,6 +1617,7 @@ app.post('/api/master/clubs/:id/admin-access-link', requireMaster, writeLimiter,
       club,
     )
 
+    res.setHeader('Cache-Control', 'no-store')
     res.json({ url, expiresAt, purpose, club: publicClub(club) })
   } catch (error) {
     next(error)
@@ -1618,8 +1636,10 @@ app.get('/api/admin-access/:token', loginLimiter, async (req, res, next) => {
     const club = await Club.findOne({ id: token.clubId }).lean()
     if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
 
+    res.setHeader('Cache-Control', 'no-store')
     res.json({
       valid: true,
+      adminUrl: adminPanelUrl(club),
       purpose: token.purpose,
       expiresAt: token.expiresAt,
       clubName: club.establishmentName,
@@ -1650,6 +1670,12 @@ app.post('/api/admin-access/:token/complete', loginLimiter, async (req, res, nex
     }
 
     const record = await createAdminPasswordRecord(password)
+    const claimed = await AdminAccessToken.findOneAndUpdate(
+      { _id: token._id, usedAt: null, expiresAt: { $gt: new Date() } },
+      { $set: { usedAt: new Date() } },
+      { new: true },
+    )
+    if (!claimed) return res.status(404).json({ error: 'Link inválido, expirado ou já utilizado.' })
     club.adminAuth = {
       passwordHash: record.passwordHash,
       passwordSalt: record.passwordSalt,
@@ -1658,8 +1684,6 @@ app.post('/api/admin-access/:token/complete', loginLimiter, async (req, res, nex
     }
     await club.save()
 
-    token.usedAt = new Date()
-    await token.save()
     await AdminAccessToken.updateMany(
       { clubId: club.id, _id: { $ne: token._id }, usedAt: null },
       { $set: { usedAt: new Date() } },
@@ -1671,7 +1695,8 @@ app.post('/api/admin-access/:token/complete', loginLimiter, async (req, res, nex
       club,
     )
 
-    res.json({ ok: true, clubName: club.establishmentName })
+    res.setHeader('Cache-Control', 'no-store')
+    res.json({ ok: true, clubName: club.establishmentName, adminUrl: adminPanelUrl(club) })
   } catch (error) {
     next(error)
   }
@@ -1734,6 +1759,7 @@ app.patch('/api/master/clubs/:id', requireMaster, writeLimiter, async (req, res,
     if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
 
     const input = validateClubInput(req.body, true)
+    if (input.systemUrl !== undefined) club.system.publicUrl = input.systemUrl
     for (const key of ['establishmentName', 'ownerName', 'cpfCnpj', 'phone', 'email', 'city', 'state']) {
       if (input[key] !== undefined) club[key] = input[key]
     }
@@ -3030,6 +3056,8 @@ app.get('/api/license/status', publicLicenseLimiter, async (req, res, next) => {
 
     await refreshClubStatus(club)
     club.system.lastSeen = new Date()
+    const report = parseSetupReport(req.get('x-club-setup'))
+    if (report) club.provisioning = { ...report, reportedAt: new Date() }
     await club.save()
 
     res.json({
