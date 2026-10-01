@@ -36,7 +36,7 @@ Requisitos:
 Build:
 
 ```
-npm install && npm run build
+npm ci --include=dev && npm run build
 ```
 
 Start:

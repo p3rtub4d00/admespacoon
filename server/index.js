@@ -3123,7 +3123,11 @@ async function shutdown(signal) {
   }
 }
 
-process.once('SIGTERM', () => shutdown('SIGTERM'))
-process.once('SIGINT', () => shutdown('SIGINT'))
+// Importing the app for tests must not connect to MongoDB or start schedulers.
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  process.once('SIGTERM', () => shutdown('SIGTERM'))
+  process.once('SIGINT', () => shutdown('SIGINT'))
+  start()
+}
 
-start()
+export { app, effectiveAccess, validateClubInput, publicClub, createAdminPasswordRecord, verifyClubAdminPassword, validateWhatsAppWebhookSignature, validateMercadoPagoWebhookSignature }
