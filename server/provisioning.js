@@ -20,7 +20,7 @@ export function parseSetupReport(encoded) {
     const report = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))
     const fields = ['establishmentConfigured', 'pricesConfigured', 'asaasConfigured']
     if (!fields.every(key => typeof report?.[key] === 'boolean')) return null
-    return Object.fromEntries(fields.map(key => [key, report[key]]))
+    return { ...Object.fromEntries(fields.map(key => [key, report[key]])), privacyConfigured: report.privacyConfigured === true }
   } catch { return null }
 }
 
@@ -34,6 +34,7 @@ export function provisioningSummary(club, { mercadoPagoConnected = false, active
     { id: 'password', label: club.demoMode ? 'Demonstração sem senha' : 'Senha criada pelo proprietário', complete: club.demoMode === true || Boolean(club.adminAuth?.passwordHash && club.adminAuth?.passwordSalt) },
     { id: 'establishment', label: 'Dados do estabelecimento configurados', complete: setup.establishmentConfigured === true },
     { id: 'prices', label: 'Preços das reservas configurados', complete: setup.pricesConfigured === true },
+    { id: 'privacy', label: 'Responsável e canal de privacidade informados', complete: setup.privacyConfigured === true },
     { id: 'payments', label: club.demoMode ? 'Pagamentos simulados' : 'Recebimento das reservas configurado', complete: club.demoMode === true || (club.reservationPaymentProvider === 'mercadopago' ? mercadoPagoConnected : setup.asaasConfigured === true) },
   ]
   const usable = active && (club.demoMode === true || !['past_due', 'suspended', 'cancelled'].includes(club.billing?.status))

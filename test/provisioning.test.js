@@ -37,7 +37,7 @@ test('system URL accepts an HTTPS origin and rejects unsafe redirects', () => {
 
 test('setup reports accept only bounded, well-formed boolean values', () => {
   const report = {establishmentConfigured:true,pricesConfigured:false,asaasConfigured:true}
-  assert.deepEqual(parseSetupReport(Buffer.from(JSON.stringify(report)).toString('base64url')),report)
+  assert.deepEqual(parseSetupReport(Buffer.from(JSON.stringify(report)).toString('base64url')),{...report,privacyConfigured:false})
   for (const report of ['', 'bad-json', 'a'.repeat(513), Buffer.from('{"establishmentConfigured":"true"}').toString('base64url')]) assert.equal(parseSetupReport(report),null)
 })
 
@@ -45,7 +45,7 @@ test('readiness requires a recent actual report, owner setup, payment configurat
   const club = fixture()
   const now = new Date()
   club.adminAuth = {passwordHash:'test-hash',passwordSalt:'test-salt'}
-  club.provisioning = {reportedAt:now,establishmentConfigured:true,pricesConfigured:true,asaasConfigured:true}
+  club.provisioning = {reportedAt:now,establishmentConfigured:true,pricesConfigured:true,asaasConfigured:true,privacyConfigured:true}
   assert.equal(provisioningSummary(club,{active:true,now}).ready,true)
   assert.equal(provisioningSummary(club,{active:false,now}).ready,false)
   assert.equal(provisioningSummary({...club,billing:{status:'past_due'}},{active:true,now}).ready,false)
