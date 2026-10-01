@@ -1,3 +1,4 @@
+import PrivacyPage from './PrivacyPage'
 import { useEffect, useMemo, useState } from 'react'
 import {
   Activity,
@@ -118,6 +119,7 @@ function Login({ onLogged }) {
             {busy ? 'Verificando...' : 'Entrar no Master'}
           </button>
         </form>
+        <p className="privacy-notice"><a href="/privacidade">Política de Privacidade</a></p>
       </div>
     </div>
   )
@@ -227,6 +229,7 @@ function AdminAccessPage({ token }) {
           </form>
         )}
 
+        <p className="privacy-notice">Os dados de acesso são utilizados para administrar o sistema contratado. <a href="/privacidade" target="_blank" rel="noreferrer">Consulte a Política de Privacidade</a>.</p>
         {done && info?.adminUrl && <a className="access-panel-link" href={info.adminUrl}>Abrir painel do clube</a>}
         {done && !info?.adminUrl && <p>Solicite o endereço do painel ao administrador do ClubeOn.</p>}
         {!busy && !info && error && <div className="form-error">{error}</div>}
@@ -406,7 +409,7 @@ function LicenseModal({ data, onClose }) {
   )
 }
 
-export default function App() {
+function App() {
   const [adminAccessToken] = useState(() => new URLSearchParams(window.location.search).get('adminAccessToken') || '')
   const [sessionChecked, setSessionChecked] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
@@ -720,6 +723,8 @@ export default function App() {
         )}
 
         {active === 'settings' && (
+          <>
+          <PrivacySettings />
           <PlanSettings
             settings={masterSettings}
             onSaved={async (saved) => {
@@ -728,6 +733,7 @@ export default function App() {
               await loadAll()
             }}
           />
+          </>
         )}
 
         {active === 'notifications' && (
@@ -758,6 +764,7 @@ export default function App() {
             </div>
           </section>
         )}
+        <p className="privacy-notice"><a href="/privacidade" target="_blank" rel="noreferrer">Política de Privacidade</a></p>
       </main>
 
       {modalClub !== undefined && (
@@ -1438,4 +1445,38 @@ function ClubTable({ clubs, setModalClub, act, setLicenseData, setDetailClubId, 
       </table>
     </div>
   )
+}
+
+export default function Root() {
+  return window.location.pathname === '/privacidade' ? <PrivacyPage /> : <App />
+}
+
+function PrivacySettings() {
+  const [form, setForm] = useState({ controllerName: '', contactEmail: '', contactPhone: '' })
+  const [loaded, setLoaded] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  useEffect(() => {
+    let alive = true
+    api.privacySettings().then(data => { if (alive) { setForm(data); setLoaded(true) } }).catch(error => { if (alive) setMessage(error.message) })
+    return () => { alive = false }
+  }, [])
+  return <section className="content-card">
+    <div className="card-head"><div><span>Dados pessoais</span><h2>Responsável e canal de privacidade</h2></div></div>
+    <form className="plan-settings-form" onSubmit={async event => {
+      event.preventDefault(); setBusy(true); setMessage('')
+      try { setForm(await api.savePrivacySettings(form)); setMessage('Dados de privacidade salvos.') }
+      catch (error) { setMessage(error.message) }
+      finally { setBusy(false) }
+    }}>
+      {[
+        ['Nome ou razão social do responsável pela plataforma', 'controllerName', 'text'],
+        ['E-mail para solicitações sobre dados pessoais', 'contactEmail', 'email'],
+        ['Telefone para solicitações sobre dados pessoais', 'contactPhone', 'tel'],
+      ].map(([label, key, type]) => <label key={key}>{label}<input type={type} disabled={!loaded || busy} value={form[key] || ''} onChange={event => setForm({ ...form, [key]: event.target.value })} /></label>)}
+      <p className="privacy-settings-note">Informe o responsável e ao menos um canal atendido por você. Estes dados serão publicados na <a href="/privacidade" target="_blank" rel="noreferrer">Política de Privacidade</a>. Esta configuração não altera o plano nem as cobranças.</p>
+      {message && <p role="status">{message}</p>}
+      <button disabled={!loaded || busy}>{busy ? 'Salvando...' : 'Salvar privacidade'}</button>
+    </form>
+  </section>
 }

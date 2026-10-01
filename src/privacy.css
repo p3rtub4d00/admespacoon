@@ -1,0 +1,11 @@
+.privacy-page { max-width: 860px; margin: 0 auto; padding: 32px 24px 64px; background: #fff; color: #263548; min-height: 100vh; font-family: system-ui, sans-serif; }
+.privacy-page h1 { font-size: clamp(26px, 5vw, 38px); margin: 28px 0 12px; }
+.privacy-page h2 { font-size: 20px; margin: 30px 0 12px; }
+.privacy-page p { font-size: 15px; line-height: 1.8; overflow-wrap: anywhere; }
+.privacy-page a { color: #1769aa; text-decoration: underline; overflow-wrap: anywhere; }
+.privacy-page .privacy-version, .privacy-sources { font-size: 13px; color: #526478; }
+.privacy-contact { padding: 4px 20px 16px; margin-top: 32px; background: #f1f6fc; border-radius: 12px; }
+.privacy-notice { font-size: 13px; line-height: 1.7; color: #526478; margin: 18px 0; }
+.privacy-notice a, .privacy-footer-link { color: #1769aa; text-decoration: underline; }
+.privacy-settings-note { font-size: 13px; line-height: 1.7; margin: 18px 0; }
+@media (max-width: 480px) { .privacy-page { padding: 24px 18px 48px; } }

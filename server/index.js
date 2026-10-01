@@ -1,3 +1,4 @@
+import { buildPrivacyPolicy, sanitizePrivacyConfig } from './privacy.js'
 import { normalizeSystemUrl, adminPanelUrl, parseSetupReport, provisioningSummary } from './provisioning.js'
 import express from 'express'
 import mongoose from 'mongoose'
@@ -160,6 +161,7 @@ const clubSchema = new mongoose.Schema({
     establishmentConfigured: Boolean,
     pricesConfigured: Boolean,
     asaasConfigured: Boolean,
+    privacyConfigured: Boolean,
     reportedAt: Date,
   },
   adminAuth: {
@@ -261,6 +263,7 @@ const masterSettingsSchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true, default: 'main' },
   planName: { type: String, default: 'EspaçoOn' },
   planPrice: { type: Number, default: 49.9 },
+  privacy: { controllerName: String, contactEmail: String, contactPhone: String },
 }, { timestamps: true })
 
 const MasterSettings = mongoose.model('MasterSettings', masterSettingsSchema)
@@ -1253,6 +1256,11 @@ function publicClub(club) {
   }
 }
 
+app.use(['/api/master', '/api/admin-access', '/api/license'], (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store')
+  next()
+})
+
 app.post('/api/master/login', loginLimiter, (req, res) => {
   if (!secureEqual(req.body?.password, MASTER_PASSWORD)) {
     return res.status(401).json({ error: 'Senha incorreta.' })
@@ -1279,6 +1287,33 @@ app.post('/api/master/logout', (_req, res) => {
     path: '/',
   })
   res.json({ ok: true })
+})
+
+app.get('/api/privacy', async (_req, res, next) => {
+  try {
+    const settings = await MasterSettings.findOne({ key: 'main' }).lean()
+    res.setHeader('Cache-Control', 'no-store')
+    res.json(buildPrivacyPolicy({ scope: 'platform', config: settings?.privacy }))
+  } catch (error) { next(error) }
+})
+
+app.get('/api/master/privacy', requireMaster, async (_req, res, next) => {
+  try { res.json(sanitizePrivacyConfig((await getMasterSettings()).privacy)) }
+  catch (error) { next(error) }
+})
+
+app.put('/api/master/privacy', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const privacy = sanitizePrivacyConfig(req.body)
+    if (!privacy.controllerName || (!privacy.contactEmail && !privacy.contactPhone)) {
+      return res.status(400).json({ error: 'Informe o responsável e ao menos um canal para solicitações sobre dados pessoais.' })
+    }
+    await MasterSettings.findOneAndUpdate(
+      { key: 'main' }, { $set: { privacy }, $setOnInsert: { key: 'main' } }, { upsert: true, new: true },
+    )
+    await logAction('settings.privacy_updated', 'Responsável e canal de privacidade atualizados.')
+    res.json(privacy)
+  } catch (error) { next(error) }
 })
 
 app.get('/api/master/settings', requireMaster, async (_req, res, next) => {
@@ -2735,7 +2770,6 @@ app.post('/api/webhooks/whatsapp', async (req, res) => {
 
           console.log('WhatsApp webhook: mensagem recebida', {
             phoneNumberId,
-            from: text(message?.from, 40),
             type: text(message?.type, 40),
           })
         }

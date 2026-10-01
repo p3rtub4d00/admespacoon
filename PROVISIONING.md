@@ -63,3 +63,7 @@ O checklist confirma configuração e conexão, não confirma liquidação de um
 - backup configurado para operação comercial.
 
 Alterações de código seguem por PR, CI verde, merge em `main` e deploy manual. Para esta atualização, faça primeiro o deploy do Master e depois do Espa-oOn. Os clubes antigos continuam operando; podem aparecer com pendências no checklist até preencher o endereço e enviar o primeiro relatório.
+
+## Privacidade na entrega
+
+Preencha a identidade do responsável e o canal de atendimento no Master e no painel do estabelecimento. Confira as páginas `/privacidade` e o indicador de privacidade na ficha. Consulte [PRIVACY_OPERATIONS.md](PRIVACY_OPERATIONS.md) para guarda, atendimento e fornecedores. A presença de configuração não é certificação de adequação legal.

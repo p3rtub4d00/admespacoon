@@ -16,6 +16,8 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  privacySettings: () => request('/api/master/privacy'),
+  savePrivacySettings: payload => request('/api/master/privacy', { method: 'PUT', body: JSON.stringify(payload) }),
   session: () => request('/api/master/session'),
   login: (password) =>
     request('/api/master/login', {
