@@ -83,6 +83,18 @@ export const api = {
     request('/api/master/clubs/' + encodeURIComponent(id) + '/rotate-license', {
       method: 'POST',
     }),
+  createAdminAccessLink: (id, purpose = 'first-access') =>
+    request('/api/master/clubs/' + encodeURIComponent(id) + '/admin-access-link', {
+      method: 'POST',
+      body: JSON.stringify({ purpose }),
+    }),
+  adminAccessInfo: (token) =>
+    request('/api/admin-access/' + encodeURIComponent(token)),
+  completeAdminAccess: (token, password, confirmation) =>
+    request('/api/admin-access/' + encodeURIComponent(token) + '/complete', {
+      method: 'POST',
+      body: JSON.stringify({ password, confirmation }),
+    }),
   pushStatus: () => request('/api/master/push/status'),
   subscribePush: (subscription) =>
     request('/api/master/push/subscribe', {
