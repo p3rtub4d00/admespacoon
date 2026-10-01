@@ -140,6 +140,12 @@ const clubSchema = new mongoose.Schema({
     lastSeen: Date,
     temporaryUnlockUntil: Date,
   },
+  adminAuth: {
+    passwordHash: String,
+    passwordSalt: String,
+    passwordSetAt: Date,
+    firstAccessCompleted: { type: Boolean, default: false },
+  },
   licenseKeyHash: { type: String, required: true },
 }, { timestamps: true })
 
@@ -162,9 +168,18 @@ const auditLogSchema = new mongoose.Schema({
   metadata: mongoose.Schema.Types.Mixed,
 }, { timestamps: true })
 
+const adminAccessTokenSchema = new mongoose.Schema({
+  tokenHash: { type: String, required: true, unique: true, index: true },
+  clubId: { type: String, required: true, index: true },
+  purpose: { type: String, enum: ['first-access', 'reset'], required: true },
+  expiresAt: { type: Date, required: true, index: true },
+  usedAt: Date,
+}, { timestamps: true })
+
 const Club = mongoose.model('Club', clubSchema)
 const Payment = mongoose.model('MasterPayment', paymentSchema)
 const AuditLog = mongoose.model('AuditLog', auditLogSchema)
+const AdminAccessToken = mongoose.model('AdminAccessToken', adminAccessTokenSchema)
 
 const webhookEventSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true, index: true },
@@ -354,6 +369,37 @@ function slugify(value) {
 
 function hashLicense(key) {
   return crypto.createHash('sha256').update(String(key)).digest('hex')
+}
+
+function hashAccessToken(tokenValue) {
+  return crypto.createHash('sha256').update(String(tokenValue)).digest('hex')
+}
+
+function deriveAdminPassword(password, salt) {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(String(password), String(salt), 64, (error, derivedKey) => {
+      if (error) return reject(error)
+      resolve(derivedKey.toString('hex'))
+    })
+  })
+}
+
+async function createAdminPasswordRecord(password) {
+  const value = String(password || '')
+  if (value.length < 8 || value.length > 200) {
+    throw Object.assign(new Error('A senha deve ter entre 8 e 200 caracteres.'), { statusCode: 400 })
+  }
+  const salt = crypto.randomBytes(16).toString('hex')
+  return {
+    passwordSalt: salt,
+    passwordHash: await deriveAdminPassword(value, salt),
+  }
+}
+
+async function verifyClubAdminPassword(club, password) {
+  if (!club?.adminAuth?.passwordHash || !club?.adminAuth?.passwordSalt) return false
+  const candidate = await deriveAdminPassword(password, club.adminAuth.passwordSalt)
+  return secureEqual(candidate, club.adminAuth.passwordHash)
 }
 
 function generateLicenseKey() {
@@ -936,6 +982,8 @@ function publicClub(club) {
     plan: club.plan,
     billing: club.billing,
     system: club.system,
+    adminPasswordConfigured: Boolean(club.adminAuth?.passwordHash && club.adminAuth?.passwordSalt),
+    adminPasswordSetAt: club.adminAuth?.passwordSetAt || null,
     createdAt: club.createdAt,
     updatedAt: club.updatedAt,
   }
@@ -1269,6 +1317,163 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
     }
 
     res.status(201).json({ club: publicClub(club), licenseKey })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/master/clubs/:id/admin-access-link', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+    if (club.demoMode) return res.status(409).json({ error: 'O modo demonstração não usa senha.' })
+
+    const configured = Boolean(club.adminAuth?.passwordHash && club.adminAuth?.passwordSalt)
+    const requestedPurpose = req.body?.purpose === 'reset' ? 'reset' : 'first-access'
+    const purpose = configured ? 'reset' : requestedPurpose
+    const rawToken = crypto.randomBytes(32).toString('base64url')
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000)
+
+    await AdminAccessToken.deleteMany({ clubId: club.id, usedAt: null })
+    await AdminAccessToken.create({
+      tokenHash: hashAccessToken(rawToken),
+      clubId: club.id,
+      purpose,
+      expiresAt,
+    })
+
+    const baseUrl = process.env.PUBLIC_BASE_URL || (req.protocol + '://' + req.get('host'))
+    const url = baseUrl.replace(/\/$/, '') + '/?adminAccessToken=' + encodeURIComponent(rawToken)
+
+    await logAction(
+      'club.admin_access_link_created',
+      purpose === 'reset' ? 'Link de redefinição de senha gerado.' : 'Link de primeiro acesso gerado.',
+      club,
+    )
+
+    res.json({ url, expiresAt, purpose, club: publicClub(club) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/admin-access/:token', loginLimiter, async (req, res, next) => {
+  try {
+    const token = await AdminAccessToken.findOne({
+      tokenHash: hashAccessToken(req.params.token),
+      usedAt: null,
+      expiresAt: { $gt: new Date() },
+    }).lean()
+
+    if (!token) return res.status(404).json({ error: 'Link inválido ou expirado.' })
+    const club = await Club.findOne({ id: token.clubId }).lean()
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+
+    res.json({
+      valid: true,
+      purpose: token.purpose,
+      expiresAt: token.expiresAt,
+      clubName: club.establishmentName,
+      ownerName: club.ownerName,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/admin-access/:token/complete', loginLimiter, async (req, res, next) => {
+  try {
+    const token = await AdminAccessToken.findOne({
+      tokenHash: hashAccessToken(req.params.token),
+      usedAt: null,
+      expiresAt: { $gt: new Date() },
+    })
+    if (!token) return res.status(404).json({ error: 'Link inválido ou expirado.' })
+
+    const club = await Club.findOne({ id: token.clubId })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+    if (club.demoMode) return res.status(409).json({ error: 'O modo demonstração não usa senha.' })
+
+    const password = String(req.body?.password || '')
+    const confirmation = String(req.body?.confirmation || '')
+    if (password !== confirmation) {
+      return res.status(400).json({ error: 'As senhas não conferem.' })
+    }
+
+    const record = await createAdminPasswordRecord(password)
+    club.adminAuth = {
+      passwordHash: record.passwordHash,
+      passwordSalt: record.passwordSalt,
+      passwordSetAt: new Date(),
+      firstAccessCompleted: true,
+    }
+    await club.save()
+
+    token.usedAt = new Date()
+    await token.save()
+    await AdminAccessToken.updateMany(
+      { clubId: club.id, _id: { $ne: token._id }, usedAt: null },
+      { $set: { usedAt: new Date() } },
+    )
+
+    await logAction(
+      token.purpose === 'reset' ? 'club.admin_password_reset' : 'club.admin_first_access_completed',
+      token.purpose === 'reset' ? 'Senha do painel redefinida pelo proprietário.' : 'Primeiro acesso do painel concluído.',
+      club,
+    )
+
+    res.json({ ok: true, clubName: club.establishmentName })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/license/admin-auth/verify', authenticateClubLicense, loginLimiter, async (req, res, next) => {
+  try {
+    if (req.club.demoMode) {
+      return res.json({ valid: true, demoMode: true, configured: false })
+    }
+
+    const configured = Boolean(req.club.adminAuth?.passwordHash && req.club.adminAuth?.passwordSalt)
+    const valid = configured ? await verifyClubAdminPassword(req.club, req.body?.password) : false
+    res.json({
+      valid,
+      configured,
+      demoMode: false,
+      passwordSetAt: req.club.adminAuth?.passwordSetAt || null,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/license/admin-auth/change', authenticateClubLicense, writeLimiter, async (req, res, next) => {
+  try {
+    if (req.club.demoMode) {
+      return res.status(409).json({ error: 'O modo demonstração não usa senha.' })
+    }
+
+    const configured = Boolean(req.club.adminAuth?.passwordHash && req.club.adminAuth?.passwordSalt)
+    if (!configured) return res.status(409).json({ error: 'A senha ainda não foi criada pelo primeiro acesso.' })
+
+    const currentPassword = String(req.body?.currentPassword || '')
+    if (!await verifyClubAdminPassword(req.club, currentPassword)) {
+      return res.status(401).json({ error: 'Senha atual incorreta.' })
+    }
+
+    const nextPassword = String(req.body?.newPassword || '')
+    const confirmation = String(req.body?.confirmation || '')
+    if (nextPassword !== confirmation) return res.status(400).json({ error: 'As senhas não conferem.' })
+
+    const record = await createAdminPasswordRecord(nextPassword)
+    req.club.adminAuth.passwordHash = record.passwordHash
+    req.club.adminAuth.passwordSalt = record.passwordSalt
+    req.club.adminAuth.passwordSetAt = new Date()
+    req.club.adminAuth.firstAccessCompleted = true
+    await req.club.save()
+
+    await logAction('club.admin_password_changed', 'Senha do painel alterada pelo proprietário.', req.club)
+    res.json({ ok: true, passwordSetAt: req.club.adminAuth.passwordSetAt })
   } catch (error) {
     next(error)
   }
