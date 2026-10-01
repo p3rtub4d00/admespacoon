@@ -18,6 +18,11 @@ const PORT = process.env.PORT || 10000
 const MONGODB_URI = process.env.MONGODB_URI
 const MASTER_PASSWORD = process.env.MASTER_PASSWORD
 const JWT_SECRET = process.env.JWT_SECRET
+
+const BACKUP_MONGODB_URI = String(process.env.BACKUP_MONGODB_URI || '').trim()
+const BACKUP_RETENTION_DAYS = Math.max(3, Math.min(90, Number(process.env.BACKUP_RETENTION_DAYS || 14)))
+const BACKUP_INTERVAL_HOURS = Math.max(6, Math.min(168, Number(process.env.BACKUP_INTERVAL_HOURS || 24)))
+const BACKUP_SOURCE_ID = String(process.env.BACKUP_SOURCE_ID || 'clubeon-master').trim()
 const ASAAS_API_KEY = String(process.env.ASAAS_API_KEY || '').trim()
 const ASAAS_ENV = String(process.env.ASAAS_ENV || 'production').toLowerCase()
 const ASAAS_WEBHOOK_TOKEN = String(process.env.ASAAS_WEBHOOK_TOKEN || '').trim()
@@ -262,6 +267,216 @@ async function getMasterSettings() {
     })
   }
   return settings
+}
+
+let backupConnection = null
+let backupTimer = null
+let backupState = {
+  configured: Boolean(BACKUP_MONGODB_URI),
+  running: false,
+  lastStartedAt: null,
+  lastCompletedAt: null,
+  lastSnapshotId: null,
+  lastError: null,
+}
+
+async function ensureBackupConnection() {
+  if (!BACKUP_MONGODB_URI) return null
+  if (backupConnection?.readyState === 1) return backupConnection
+
+  if (backupConnection) {
+    await backupConnection.close().catch(() => {})
+  }
+
+  backupConnection = mongoose.createConnection(BACKUP_MONGODB_URI, {
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
+    maxPoolSize: 3,
+  })
+  await backupConnection.asPromise()
+  return backupConnection
+}
+
+function backupSnapshotId() {
+  return [
+    BACKUP_SOURCE_ID.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60),
+    new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14),
+    crypto.randomBytes(3).toString('hex'),
+  ].join('-')
+}
+
+async function latestBackupSnapshot() {
+  const connection = await ensureBackupConnection()
+  if (!connection) return null
+
+  return connection.db
+    .collection('clubeon_backup_snapshots')
+    .find({ sourceId: BACKUP_SOURCE_ID, status: 'completed' })
+    .sort({ completedAt: -1 })
+    .limit(1)
+    .next()
+}
+
+async function cleanupExpiredBackups() {
+  const connection = await ensureBackupConnection()
+  if (!connection) return
+
+  const cutoff = new Date(Date.now() - BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+  const expired = await connection.db
+    .collection('clubeon_backup_snapshots')
+    .find({
+      sourceId: BACKUP_SOURCE_ID,
+      completedAt: { $lt: cutoff },
+    })
+    .project({ snapshotId: 1 })
+    .toArray()
+
+  const snapshotIds = expired.map((item) => item.snapshotId).filter(Boolean)
+  if (!snapshotIds.length) return
+
+  await Promise.all([
+    connection.db.collection('clubeon_backup_documents').deleteMany({
+      sourceId: BACKUP_SOURCE_ID,
+      snapshotId: { $in: snapshotIds },
+    }),
+    connection.db.collection('clubeon_backup_snapshots').deleteMany({
+      sourceId: BACKUP_SOURCE_ID,
+      snapshotId: { $in: snapshotIds },
+    }),
+  ])
+}
+
+async function runDatabaseBackup({ force = false, reason = 'scheduled' } = {}) {
+  if (!BACKUP_MONGODB_URI) return { configured: false, skipped: true }
+  if (backupState.running) return { configured: true, skipped: true, reason: 'already-running' }
+
+  const connection = await ensureBackupConnection()
+  const latest = await latestBackupSnapshot()
+  const minAgeMs = BACKUP_INTERVAL_HOURS * 60 * 60 * 1000
+
+  if (
+    !force &&
+    latest?.completedAt &&
+    Date.now() - new Date(latest.completedAt).getTime() < minAgeMs
+  ) {
+    backupState.lastCompletedAt = latest.completedAt
+    backupState.lastSnapshotId = latest.snapshotId || null
+    backupState.lastError = null
+    return { configured: true, skipped: true, reason: 'recent-backup', snapshotId: latest.snapshotId }
+  }
+
+  const snapshotId = backupSnapshotId()
+  const startedAt = new Date()
+  backupState = {
+    ...backupState,
+    configured: true,
+    running: true,
+    lastStartedAt: startedAt,
+    lastError: null,
+  }
+
+  const snapshotCollection = connection.db.collection('clubeon_backup_snapshots')
+  const documentCollection = connection.db.collection('clubeon_backup_documents')
+
+  await snapshotCollection.insertOne({
+    snapshotId,
+    sourceId: BACKUP_SOURCE_ID,
+    reason,
+    status: 'running',
+    startedAt,
+    collections: [],
+  })
+
+  try {
+    const collections = await mongoose.connection.db.listCollections({}, { nameOnly: true }).toArray()
+    const summary = []
+
+    for (const { name } of collections) {
+      if (!name || name.startsWith('system.')) continue
+
+      const cursor = mongoose.connection.db.collection(name).find({})
+      let count = 0
+      let batch = []
+
+      for await (const document of cursor) {
+        batch.push({
+          sourceId: BACKUP_SOURCE_ID,
+          snapshotId,
+          collection: name,
+          document,
+        })
+        count += 1
+
+        if (batch.length >= 250) {
+          await documentCollection.insertMany(batch, { ordered: false })
+          batch = []
+        }
+      }
+
+      if (batch.length) {
+        await documentCollection.insertMany(batch, { ordered: false })
+      }
+
+      summary.push({ name, count })
+    }
+
+    const completedAt = new Date()
+    await snapshotCollection.updateOne(
+      { snapshotId, sourceId: BACKUP_SOURCE_ID },
+      {
+        $set: {
+          status: 'completed',
+          completedAt,
+          collections: summary,
+        },
+      },
+    )
+
+    backupState = {
+      ...backupState,
+      running: false,
+      lastCompletedAt: completedAt,
+      lastSnapshotId: snapshotId,
+      lastError: null,
+    }
+
+    await cleanupExpiredBackups()
+    console.log('Backup MongoDB concluído:', snapshotId)
+    return { configured: true, snapshotId, completedAt, collections: summary }
+  } catch (error) {
+    const failedAt = new Date()
+    backupState = {
+      ...backupState,
+      running: false,
+      lastError: String(error?.message || error),
+    }
+
+    await snapshotCollection.updateOne(
+      { snapshotId, sourceId: BACKUP_SOURCE_ID },
+      {
+        $set: {
+          status: 'failed',
+          failedAt,
+          error: String(error?.message || error).slice(0, 500),
+        },
+      },
+    ).catch(() => {})
+
+    throw error
+  }
+}
+
+function startDatabaseBackupScheduler() {
+  if (!BACKUP_MONGODB_URI || backupTimer) return
+
+  const run = () => {
+    runDatabaseBackup({ reason: 'automatic' }).catch((error) => {
+      console.error('Falha no backup automático do MongoDB:', error?.message || error)
+    })
+  }
+
+  setTimeout(run, 30_000)
+  backupTimer = setInterval(run, Math.max(60 * 60 * 1000, BACKUP_INTERVAL_HOURS * 60 * 60 * 1000))
 }
 
 async function currentPlanPrice() {
@@ -2835,6 +3050,13 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     whatsappWebhookConfigured: Boolean(WHATSAPP_VERIFY_TOKEN && WHATSAPP_APP_SECRET),
+    backup: {
+      configured: backupState.configured,
+      running: backupState.running,
+      lastCompletedAt: backupState.lastCompletedAt,
+      lastSnapshotId: backupState.lastSnapshotId,
+      healthy: !backupState.lastError,
+    },
   })
 })
 
@@ -2874,6 +3096,7 @@ async function start() {
     console.log('EspaçoOn Master conectado ao MongoDB.')
     app.listen(PORT, '0.0.0.0', () => {
       console.log('EspaçoOn Master rodando na porta ' + PORT)
+      startDatabaseBackupScheduler()
     })
   } catch (error) {
     console.error('Falha ao iniciar EspaçoOn Master:', error?.message || error)
@@ -2884,6 +3107,8 @@ async function start() {
 async function shutdown(signal) {
   console.log(signal + ' recebido. Encerrando...')
   try {
+    if (backupTimer) clearInterval(backupTimer)
+    if (backupConnection) await backupConnection.close().catch(() => {})
     await mongoose.connection.close()
   } finally {
     process.exit(0)
