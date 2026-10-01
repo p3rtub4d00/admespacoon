@@ -329,12 +329,12 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa√
 }
 
 function LicenseModal({ data, onClose }) {
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState('')
   if (!data?.licenseKey) return null
-  const copy = async () => {
-    await navigator.clipboard.writeText(data.licenseKey)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1600)
+  const copy = async (value, key) => {
+    await navigator.clipboard.writeText(value)
+    setCopied(key)
+    setTimeout(() => setCopied(''), 1600)
   }
 
   return (
@@ -355,8 +355,21 @@ function LicenseModal({ data, onClose }) {
           <strong>{data.club?.id}</strong>
           <span>License Key</span>
           <code>{data.licenseKey}</code>
+          {data.adminAccessUrl && (
+            <>
+              <span>Primeiro acesso do propriet√°rio</span>
+              <code>{data.adminAccessUrl}</code>
+            </>
+          )}
         </div>
-        <button className="primary-wide" onClick={copy}>{copied ? 'Copiado' : 'Copiar chave'}</button>
+        <button className="primary-wide" onClick={() => copy(data.licenseKey, 'license')}>
+          {copied === 'license' ? 'Chave copiada' : 'Copiar chave'}
+        </button>
+        {data.adminAccessUrl && (
+          <button className="primary-wide" onClick={() => copy(data.adminAccessUrl, 'access')}>
+            {copied === 'access' ? 'Link copiado' : 'Copiar link de primeiro acesso'}
+          </button>
+        )}
       </div>
     </div>
   )
@@ -724,7 +737,14 @@ export default function App() {
           onClose={() => setModalClub(undefined)}
           onSaved={async (result) => {
             setModalClub(undefined)
-            if (result?.licenseKey) setLicenseData(result)
+            if (result?.licenseKey && result?.club?.id) {
+              try {
+                const access = await api.createAdminAccessLink(result.club.id, 'first-access')
+                setLicenseData({ ...result, adminAccessUrl: access.url })
+              } catch {
+                setLicenseData(result)
+              }
+            }
             setMessage(modalClub ? 'Cadastro atualizado.' : 'Cliente criado com sucesso.')
             await loadAll()
           }}
