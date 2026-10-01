@@ -1092,3 +1092,17 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
 .provisioning-checks li strong { color: #956a10; font-size: 12px; }
 .provisioning-checks li.complete strong, .provisioning-checks li.complete svg { color: #13834b; }
 .provisioning-section summary { cursor: pointer; font-weight: 700; margin-top: 16px; }
+
+.demo-periods { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 24px 20px; }
+.demo-periods button { padding: 9px 14px; border: 1px solid #dbe5ef; border-radius: 10px; background: #fff; color: #456; font-weight: 700; }
+.demo-periods button.selected { background: #e9f4ff; color: #1262c5; border-color: #91c5ff; }
+.demo-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; padding: 0 24px 20px; }
+.demo-metrics article { display: grid; gap: 10px; padding: 18px; border: 1px solid #e1ebf5; border-radius: 14px; background: #f8fbff; }
+.demo-metrics svg { color: #2080df; }
+.demo-metrics span { color: #52677b; font-size: 13px; }
+.demo-metrics strong { color: #172b45; font-size: 30px; }
+.demo-analytics-note { margin: 0; padding: 0 24px 16px; color: #64788a; font-size: 13px; line-height: 1.6; }
+.demo-table-caption { padding: 12px 24px; text-align: left; color: #172b45; font-weight: 700; }
+.demo-periods button:focus-visible { outline: 3px solid #91c5ff; outline-offset: 2px; }
+@media (max-width: 800px) { .demo-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .demo-metrics, .demo-periods { padding-left: 16px; padding-right: 16px; } }

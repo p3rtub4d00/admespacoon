@@ -26,6 +26,7 @@ export const api = {
     }),
   logout: () => request('/api/master/logout', { method: 'POST' }),
 
+  demoAnalytics: () => request('/api/master/demo-analytics'),
   dashboard: () => request('/api/master/dashboard'),
   revenue: (month) =>
     request('/api/master/revenue?month=' + encodeURIComponent(month)),

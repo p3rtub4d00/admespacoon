@@ -1,3 +1,4 @@
+import { demoEventRecord, demoAnalyticsSummary, analyticsDay, daysBefore } from './demo-analytics.js'
 import { parseDueDate, nextDueDateFromDay, requireCurrentOrFutureDate } from './billing-dates.js'
 import { buildPrivacyPolicy, sanitizePrivacyConfig } from './privacy.js'
 import { normalizeSystemUrl, adminPanelUrl, parseSetupReport, provisioningSummary } from './provisioning.js'
@@ -279,6 +280,20 @@ const masterSettingsSchema = new mongoose.Schema({
 }, { timestamps: true })
 
 const MasterSettings = mongoose.model('MasterSettings', masterSettingsSchema)
+
+const demoEventSchema = new mongoose.Schema({
+  _id: { type: String, required: true },
+  clubId: { type: String, required: true },
+  type: { type: String, required: true },
+  day: { type: String, required: true },
+  eventKey: { type: String, required: true },
+  createdAt: { type: Date, required: true },
+  expiresAt: { type: Date, required: true },
+})
+demoEventSchema.index({ clubId: 1, day: 1 })
+demoEventSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 })
+const DemoEvent = mongoose.model('DemoEvent', demoEventSchema)
+
 
 async function getMasterSettings() {
   let settings = await MasterSettings.findOne({ key: 'main' })
@@ -1431,6 +1446,35 @@ app.get('/api/master/dashboard', requireMaster, async (_req, res, next) => {
   } catch (error) {
     next(error)
   }
+})
+
+const demoEventLimiter = rateLimit({ windowMs: 60000, limit: 600, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Muitos eventos de demonstração.' } })
+
+app.post('/api/license/demo-events', demoEventLimiter, authenticateClubLicense, async (req, res, next) => {
+  try {
+    if (req.club.demoMode !== true || req.club.system?.status === 'cancelled') return res.status(403).json({ error: 'Métricas disponíveis somente para demonstração.' })
+    const record = demoEventRecord(req.club.id, req.body, JWT_SECRET)
+    try {
+      await DemoEvent.updateOne(
+        { _id: record.eventKey },
+        { $setOnInsert: record }, { upsert: true },
+      )
+    } catch (error) { if (error.code !== 11000) throw error }
+    res.json({ ok: true })
+  } catch (error) { next(error) }
+})
+
+app.get('/api/master/demo-analytics', requireMaster, async (_req, res, next) => {
+  try {
+    const clubs = await Club.find({ demoMode: true }).lean()
+    const ids = clubs.filter(club => club.system?.status !== 'cancelled').map(club => club.id)
+    const today = analyticsDay()
+    const rows = ids.length ? await DemoEvent.aggregate([
+      { $match: { clubId: { $in: ids }, day: { $gte: daysBefore(today, 89), $lte: today }, expiresAt: { $gt: new Date() } } },
+      { $group: { _id: { day: '$day', type: '$type' }, count: { $sum: 1 } } },
+    ]) : []
+    res.json({ ...demoAnalyticsSummary(rows), demoClubs: clubs.filter(club => ids.includes(club.id)).map(club => ({ id: club.id, name: club.establishmentName })) })
+  } catch (error) { next(error) }
 })
 
 app.get('/api/master/revenue', requireMaster, async (req, res, next) => {

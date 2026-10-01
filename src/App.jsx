@@ -1,3 +1,4 @@
+import DemoAnalytics from './DemoAnalytics'
 import PrivacyPage from './PrivacyPage'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -633,6 +634,8 @@ function App() {
               <article><div><Clock3 /></div><span>Em atraso</span><strong>{dashboard?.pastDueClubs ?? 0}</strong><small>aguardando regularização</small></article>
               <article><div><BadgeDollarSign /></div><span>MRR potencial</span><strong>{money(dashboard?.mrr)}</strong><small>mensalidades ativas</small></article>
             </section>
+
+            <DemoAnalytics />
 
             <section className="content-card">
               <div className="card-head">
