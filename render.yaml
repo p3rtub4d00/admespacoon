@@ -8,3 +8,10 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+
+      - key: BACKUP_MONGODB_URI
+        sync: false
+      - key: BACKUP_RETENTION_DAYS
+        value: 14
+      - key: BACKUP_INTERVAL_HOURS
+        value: 24
