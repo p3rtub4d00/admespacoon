@@ -1,3 +1,4 @@
+import { RegistrationPage, RegistrationInvites } from './Registration'
 import DemoAnalytics from './DemoAnalytics'
 import PrivacyPage from './PrivacyPage'
 import { useEffect, useMemo, useState } from 'react'
@@ -268,9 +269,10 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa√
     try {
       const payload = {
         ...form,
+        ...(club?.registrationInviteId ? { registrationInviteId: club.registrationInviteId } : {}),
         nextDueDate: form.nextDueDate,
       }
-      const result = club
+      const result = club?.id
         ? await api.updateClub(club.id, payload)
         : await api.createClub(payload)
       onSaved(result)
@@ -286,8 +288,8 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa√
       <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div>
-            <span>{club ? 'Editar cadastro' : 'Novo cliente'}</span>
-            <h2>{club ? club.establishmentName : 'Cadastrar clube'}</h2>
+            <span>{club?.id ? 'Editar cadastro' : 'Novo cliente'}</span>
+            <h2>{club?.id ? club.establishmentName : club?.registrationInviteId ? 'Revisar cadastro recebido' : 'Cadastrar clube'}</h2>
           </div>
           <button className="icon-button" onClick={onClose}><X /></button>
         </div>
@@ -332,7 +334,7 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa√
               onChange={(e) => setForm({ ...form, systemUrl: e.target.value })} />
             <small>Pode preencher depois que o sistema estiver publicado.</small>
           </label>
-          {!club && <label className="full demo-create-option">
+          {!club?.id && <label className="full demo-create-option">
             <input type="checkbox" checked={form.demoMode} onChange={(e) => setForm({ ...form, demoMode: e.target.checked })} />
             Criar em demonstra√ß√£o, com pagamentos simulados e painel sem senha
           </label>}
@@ -349,7 +351,7 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa√
 
           <div className="modal-actions">
             <button type="button" className="secondary" onClick={onClose}>Cancelar</button>
-            <button disabled={busy}>{busy ? 'Salvando...' : club ? 'Salvar altera√ß√µes' : 'Criar cliente'}</button>
+            <button disabled={busy}>{busy ? 'Salvando...' : club?.id ? 'Salvar altera√ß√µes' : 'Criar cliente'}</button>
           </div>
         </form>
       </div>
@@ -418,6 +420,10 @@ function LicenseModal({ data, onClose }) {
 }
 
 function App() {
+  const [registrationToken] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('convite') || '')
+  useEffect(() => {
+    if (registrationToken) window.history.replaceState(null, '', window.location.pathname)
+  }, [registrationToken])
   const [adminAccessToken] = useState(() => new URLSearchParams(window.location.search).get('adminAccessToken') || '')
   const [sessionChecked, setSessionChecked] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
@@ -472,6 +478,7 @@ function App() {
   }
 
   useEffect(() => {
+    if (window.location.pathname === '/cadastro') return
     api.session()
       .then(() => setAuthenticated(true))
       .catch(() => setAuthenticated(false))
@@ -563,6 +570,7 @@ function App() {
     }
   }
 
+  if (window.location.pathname === '/cadastro') return <RegistrationPage token={registrationToken} />
   if (adminAccessToken) return <AdminAccessPage token={adminAccessToken} />
   if (!sessionChecked) return <div className="screen-loading">Carregando Master...</div>
   if (!authenticated) return <Login onLogged={() => setAuthenticated(true)} />
@@ -653,6 +661,7 @@ function App() {
               <div><span>Licenciamento</span><h2>Clubes cadastrados</h2></div>
               <button onClick={() => setModalClub(null)}><Plus size={16} /> Novo cliente</button>
             </div>
+            <RegistrationInvites refreshKey={clubs} onReview={setModalClub} />
             <div className="search-box"><Search size={17} /><input placeholder="Buscar clube, propriet√°rio, telefone ou ID..." value={query} onChange={(e) => setQuery(e.target.value)} /></div>
             <ClubTable clubs={filteredClubs} setModalClub={setModalClub} act={act} setLicenseData={setLicenseData} setDetailClubId={setDetailClubId} />
           </section>
@@ -796,7 +805,7 @@ function App() {
                 setLicenseData(result)
               }
             }
-            setMessage(modalClub ? 'Cadastro atualizado.' : 'Cliente criado com sucesso.')
+            setMessage(modalClub?.id ? 'Cadastro atualizado.' : 'Cliente criado com sucesso.')
             await loadAll()
           }}
         />

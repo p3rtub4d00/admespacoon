@@ -104,3 +104,35 @@ A página pública usa um identificador aleatório em sessionStorage por aba e r
 O endpoint público não aceita eventos de conclusão. O envio ao Master usa a licença apenas no servidor; o Master valida novamente que o clube está em demonstração. As consultas de métricas exigem sessão Master. A coleta é auxiliar: bloqueios de navegador, indisponibilidade/reinício dos servidores, bots e testes próprios podem afetar os números. Falhas de métricas não interrompem reservas nem navegação.
 
 Publicação: deploy primeiro do Master e depois do EspaçoOn/piloto. Não exige novas variáveis de ambiente.
+
+
+## Cadastro do proprietário por convite
+
+Na aba **Clubes**, use **Gerar link de cadastro** e copie o link antes de fechar.
+Envie-o individualmente ao proprietário. O convite vence em 24 horas, pode ser
+revogado no Master e aceita apenas um envio, com consumo atômico inclusive em
+requisições simultâneas. Para reenviar um convite perdido ou expirado, revogue o
+anterior e gere outro.
+
+O formulário público em `/cadastro` recebe nome do clube, responsável, CPF/CNPJ,
+WhatsApp, e-mail, cidade e UF. Não recebe vencimento, modo demonstração, preço,
+credenciais ou endereço do **sistema**. Não cria sessão, licença ou cobrança.
+Na aba Clubes, atualize a lista e use **Revisar e concluir** no cadastro recebido;
+confirme os dados, configure vencimento, URL e demonstração e crie o cliente.
+Somente essa etapa autenticada usa o fluxo existente de assinatura e licença.
+O cadastro recebido mantém um ID de clube estável para impedir criações duplas.
+O formulário manual continua disponível em **Novo cliente**.
+
+O token de 32 bytes fica no fragmento do link (não na query ou caminho das APIs),
+é retirado da barra de endereço após a abertura e enviado no corpo das consultas.
+Somente seu hash SHA-256 fica no banco. Ao recarregar a página, reabra o link
+original. APIs usam `no-store`, não devolvem dados pessoais ao portador do link e
+validam prazo e revogação em cada operação. A página informa envio por HTTPS e
+acesso da equipe autorizada; **não** afirma criptografia de todos os campos no
+banco nem oculta CPF/CNPJ da equipe master. Há link para o aviso de privacidade.
+Os registros de convite não têm expurgo automático; revogação desativa o convite,
+sem apagar seus dados. Revise sua guarda conforme a finalidade do cadastro.
+
+Não há nova variável obrigatória. Em produção, o endereço do Master deve usar
+HTTPS; `PUBLIC_BASE_URL`, se configurada, deve apontar para sua origem HTTPS.
+Apenas o repositório Master precisa ser atualizado para esta funcionalidade.
