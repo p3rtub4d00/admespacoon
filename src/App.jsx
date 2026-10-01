@@ -23,6 +23,7 @@ import {
   Settings,
   ShieldCheck,
   UnlockKeyhole,
+  Trash2,
   Users,
   WalletCards,
   X,
@@ -247,7 +248,12 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa�
     email: club?.email || '',
     city: club?.city || '',
     state: club?.state || '',
-    dueDay: club?.billing?.dueDay || 10,
+    nextDueDate: club?.billing?.nextDueDate?.slice(0, 10) || (() => {
+      const now = new Date()
+      const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 10, 12))
+      if (date <= now) date.setUTCMonth(date.getUTCMonth() + 1)
+      return date.toISOString().slice(0, 10)
+    })(),
     systemUrl: club?.system?.publicUrl || '',
     demoMode: club?.demoMode === true,
   })
@@ -261,7 +267,7 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa�
     try {
       const payload = {
         ...form,
-        dueDay: Number(form.dueDay),
+        nextDueDate: form.nextDueDate,
       }
       const result = club
         ? await api.updateClub(club.id, payload)
@@ -314,9 +320,10 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa�
             <input maxLength={2} value={form.state}
               onChange={(e) => setForm({ ...form, state: e.target.value.toUpperCase() })} />
           </label>
-          <label>Dia de vencimento
-            <input type="number" min="1" max="28" value={form.dueDay}
-              onChange={(e) => setForm({ ...form, dueDay: e.target.value })} />
+          <label>Próximo vencimento
+            <input type="date" required value={form.nextDueDate}
+              onChange={(e) => setForm({ ...form, nextDueDate: e.target.value })} />
+            <small>Escolha dia, mês e ano. As próximas mensalidades seguirão esse dia; meses menores usam o último dia.</small>
           </label>
 
           <label className="full">Endereço do sistema do clube
@@ -1437,6 +1444,16 @@ function ClubTable({ clubs, setModalClub, act, setLicenseData, setDetailClubId, 
                       alert(err.message)
                     }
                   }}><RefreshCcw /></button>}
+                  {!billingOnly && <button title="Excluir clube" aria-label={'Excluir ' + club.establishmentName} className="danger" onClick={() => {
+                    if (!club.demoMode && !['suspended', 'cancelled'].includes(club.system?.status)) {
+                      alert('Bloqueie ou cancele o clube antes de excluir. Clubes de demonstração podem ser excluídos diretamente.')
+                      return
+                    }
+                    const confirmation = prompt('Excluir ' + club.establishmentName + '? O acesso será invalidado e a assinatura Asaas vinculada será encerrada, incluindo cobranças pendentes ou vencidas. O histórico financeiro será preservado. Esta ação não apaga o banco nem o serviço Render do clube. Para confirmar, digite: ' + club.id)
+                    if (confirmation === null) return
+                    if (confirmation.trim() !== club.id) { alert('Código diferente. Exclusão cancelada.'); return }
+                    act(() => api.deleteClub(club.id, confirmation.trim()), 'Clube excluído da lista e acessos invalidados.')
+                  }}><Trash2 /></button>}
                 </div>
               </td>
             </tr>

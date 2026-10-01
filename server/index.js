@@ -1,3 +1,4 @@
+import { parseDueDate, nextDueDateFromDay, requireCurrentOrFutureDate } from './billing-dates.js'
 import { buildPrivacyPolicy, sanitizePrivacyConfig } from './privacy.js'
 import { normalizeSystemUrl, adminPanelUrl, parseSetupReport, provisioningSummary } from './provisioning.js'
 import express from 'express'
@@ -106,6 +107,7 @@ const clubSchema = new mongoose.Schema({
   email: String,
   city: String,
   state: String,
+  deletedAt: { type: Date, default: null, index: true },
   demoMode: { type: Boolean, default: false, index: true },
   reservationPaymentProvider: {
     type: String,
@@ -172,6 +174,16 @@ const clubSchema = new mongoose.Schema({
   },
   licenseKeyHash: { type: String, required: true },
 }, { timestamps: true })
+
+// Excluded clubs remain only as history; all ordinary lookups (including licensing
+// and provider callbacks) must ignore them.
+clubSchema.pre(/^find/, function () {
+  if (this.getOptions().includeDeleted === true) {
+    delete this.options.includeDeleted
+    return
+  }
+  this.where({ deletedAt: null })
+})
 
 const paymentSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true, index: true },
@@ -954,14 +966,6 @@ function addDays(date, days) {
   return next
 }
 
-function nextDueDateFromDay(dueDay, from = new Date()) {
-  const year = from.getFullYear()
-  const month = from.getMonth()
-  let date = new Date(year, month, Math.min(Number(dueDay) || 10, 28), 12)
-  if (date <= from) date = new Date(year, month + 1, Math.min(Number(dueDay) || 10, 28), 12)
-  return date
-}
-
 async function asaasRequest(pathname, options = {}) {
   if (!ASAAS_API_KEY) throw Object.assign(new Error('Asaas não configurado no Master.'), { statusCode: 503 })
 
@@ -980,7 +984,7 @@ async function asaasRequest(pathname, options = {}) {
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
     const message = data?.errors?.[0]?.description || data?.error || 'Erro na API do Asaas.'
-    throw Object.assign(new Error(message), { statusCode: response.status >= 500 ? 502 : 400 })
+    throw Object.assign(new Error(message), { statusCode: response.status >= 500 ? 502 : 400, providerStatus: response.status })
   }
   return data
 }
@@ -1221,9 +1225,12 @@ function validateClubInput(body, partial = false) {
     }
   }
 
-  if (!partial || body.dueDay !== undefined) {
+  if (body.nextDueDate !== undefined) {
+    result.nextDueDate = parseDueDate(body.nextDueDate)
+    result.dueDay = result.nextDueDate.getUTCDate()
+  } else if (!partial || body.dueDay !== undefined) {
     const dueDay = Number(body.dueDay || 10)
-    if (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 28) {
+    if (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31) {
       throw Object.assign(new Error('Dia de vencimento inválido.'), { statusCode: 400 })
     }
     result.dueDay = dueDay
@@ -1442,14 +1449,14 @@ app.get('/api/master/revenue', requireMaster, async (req, res, next) => {
         status: 'paid',
         paidAt: { $gte: start, $lt: end },
       }).sort({ paidAt: -1 }).lean(),
-      Club.find().lean(),
+      Club.find().setOptions({ includeDeleted: true }).lean(),
       getMasterSettings(),
     ])
 
     const clubsById = new Map(clubs.map((club) => [club.id, club]))
     const totalReceived = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
     const paidClubIds = new Set(payments.map((payment) => payment.clubId).filter(Boolean))
-    const activeClubs = clubs.filter((club) => club.system?.status !== 'cancelled')
+    const activeClubs = clubs.filter((club) => !club.deletedAt && club.system?.status !== 'cancelled')
     const potentialRevenue = activeClubs.reduce(
       (sum, club) => sum + Number(club.plan?.price || settings.planPrice || 0),
       0,
@@ -1569,6 +1576,7 @@ app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) =
 app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next) => {
   try {
     const input = validateClubInput(req.body)
+    if (input.nextDueDate) requireCurrentOrFutureDate(input.nextDueDate)
     const masterSettings = await getMasterSettings()
     const licenseKey = generateLicenseKey()
     const id = randomId('CLB')
@@ -1592,7 +1600,7 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
       },
       billing: {
         dueDay: input.dueDay,
-        nextDueDate: nextDueDateFromDay(input.dueDay),
+        nextDueDate: input.nextDueDate || nextDueDateFromDay(input.dueDay),
         status: 'active',
       },
       demoMode: input.demoMode === true,
@@ -1802,11 +1810,13 @@ app.patch('/api/master/clubs/:id', requireMaster, writeLimiter, async (req, res,
     if (input.dueDay !== undefined) {
       const previousDueDay = Number(club.billing?.dueDay || 10)
       const dueDayChanged = previousDueDay !== input.dueDay
+      const dueDateChanged = input.nextDueDate && input.nextDueDate.toISOString().slice(0, 10) !== new Date(club.billing?.nextDueDate || 0).toISOString().slice(0, 10)
+      if (dueDateChanged) requireCurrentOrFutureDate(input.nextDueDate)
 
       club.billing.dueDay = input.dueDay
 
-      if (dueDayChanged || !club.billing.nextDueDate) {
-        const newDueDate = nextDueDateFromDay(input.dueDay)
+      if (dueDayChanged || dueDateChanged || !club.billing.nextDueDate) {
+        const newDueDate = input.nextDueDate || nextDueDateFromDay(input.dueDay)
         const newDueDateISO = newDueDate.toISOString().slice(0, 10)
 
         if (ASAAS_API_KEY && club.billing?.asaasSubscriptionId && !club.demoMode) {
@@ -1891,6 +1901,41 @@ app.patch('/api/master/clubs/:id', requireMaster, writeLimiter, async (req, res,
     }
 
     res.json(publicClub(club))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/master/clubs/:id', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+    if (req.body?.confirmation !== club.id) return res.status(400).json({ error: 'Confirme o código do clube para excluir.' })
+    if (!club.demoMode && !['suspended', 'cancelled'].includes(club.system?.status)) {
+      return res.status(409).json({ error: 'Bloqueie ou cancele o clube antes de excluir.' })
+    }
+    if (club.billing?.asaasSubscriptionId) {
+      // Fail closed when Asaas is unavailable: never hide a recurring subscription
+      // that may still generate charges. A retry after a previous cancellation is safe.
+      try {
+        await asaasRequest('/subscriptions/' + encodeURIComponent(club.billing.asaasSubscriptionId), { method: 'DELETE' })
+      } catch (error) {
+        if (error.providerStatus !== 404) throw error
+      }
+    }
+    club.deletedAt = new Date()
+    club.system.status = 'cancelled'
+    club.system.temporaryUnlockUntil = null
+    club.billing.status = 'cancelled'
+    club.billing.asaasSubscriptionId = null
+    club.licenseKeyHash = hashLicense(generateLicenseKey())
+    club.adminAuth = { firstAccessCompleted: false }
+    club.payments = { mercadoPago: {} }
+    await club.save()
+    await AdminAccessToken.deleteMany({ clubId: club.id })
+    await MercadoPagoOAuthAttempt.deleteMany({ clubId: club.id })
+    await logAction('club.deleted', 'Clube excluído da operação; histórico financeiro preservado.', club)
+    res.json({ deleted: true, id: club.id })
   } catch (error) {
     next(error)
   }
