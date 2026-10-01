@@ -30,6 +30,10 @@ const MERCADOPAGO_CLIENT_SECRET = String(process.env.MERCADOPAGO_CLIENT_SECRET |
 const MERCADOPAGO_REDIRECT_URI = String(process.env.MERCADOPAGO_REDIRECT_URI || '').trim()
 const MERCADOPAGO_TOKEN_ENCRYPTION_KEY = String(process.env.MERCADOPAGO_TOKEN_ENCRYPTION_KEY || '').trim()
 const MERCADOPAGO_WEBHOOK_SECRET = String(process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim()
+
+const WHATSAPP_VERIFY_TOKEN = String(process.env.WHATSAPP_VERIFY_TOKEN || '').trim()
+const WHATSAPP_APP_SECRET = String(process.env.WHATSAPP_APP_SECRET || '').trim()
+
 const MERCADOPAGO_OAUTH_CONFIGURED = Boolean(
   MERCADOPAGO_CLIENT_ID &&
   MERCADOPAGO_CLIENT_SECRET &&
@@ -53,7 +57,12 @@ app.use(helmet({
     },
   },
 }))
-app.use(express.json({ limit: '1mb' }))
+app.use(express.json({
+  limit: '1mb',
+  verify: (req, _res, buffer) => {
+    req.rawBody = Buffer.from(buffer)
+  },
+}))
 app.use(cookieParser())
 
 const loginLimiter = rateLimit({
@@ -611,6 +620,23 @@ function stableUuid(value) {
     'a' + hex.slice(17, 20),
     hex.slice(20, 32),
   ].join('-')
+}
+
+function validateWhatsAppWebhookSignature(req) {
+  if (!WHATSAPP_APP_SECRET || !req.rawBody) return false
+
+  const signature = String(req.get('x-hub-signature-256') || '')
+  if (!signature.startsWith('sha256=')) return false
+
+  const receivedHash = signature.slice('sha256='.length)
+  const expectedHash = crypto
+    .createHmac('sha256', WHATSAPP_APP_SECRET)
+    .update(req.rawBody)
+    .digest('hex')
+
+  const a = Buffer.from(expectedHash, 'utf8')
+  const b = Buffer.from(receivedHash, 'utf8')
+  return a.length === b.length && crypto.timingSafeEqual(a, b)
 }
 
 function validateMercadoPagoWebhookSignature(req) {
@@ -2397,6 +2423,99 @@ app.post('/api/license/billing/pix', authenticateClubLicense, writeLimiter, asyn
   }
 })
 
+app.get('/api/webhooks/whatsapp', (req, res) => {
+  if (!WHATSAPP_VERIFY_TOKEN) {
+    return res.status(503).send('Webhook WhatsApp não configurado.')
+  }
+
+  const mode = String(req.query?.['hub.mode'] || '')
+  const verifyToken = String(req.query?.['hub.verify_token'] || '')
+  const challenge = String(req.query?.['hub.challenge'] || '')
+
+  if (
+    mode === 'subscribe' &&
+    challenge &&
+    secureEqual(verifyToken, WHATSAPP_VERIFY_TOKEN)
+  ) {
+    return res.status(200).send(challenge)
+  }
+
+  return res.status(403).send('Verificação recusada.')
+})
+
+app.post('/api/webhooks/whatsapp', async (req, res) => {
+  if (!WHATSAPP_APP_SECRET) {
+    return res.status(503).json({ error: 'Webhook WhatsApp não configurado.' })
+  }
+
+  if (!validateWhatsAppWebhookSignature(req)) {
+    return res.status(401).json({ error: 'Webhook WhatsApp não autorizado.' })
+  }
+
+  if (req.body?.object !== 'whatsapp_business_account') {
+    return res.status(200).json({ received: true, ignored: true })
+  }
+
+  res.status(200).json({ received: true })
+
+  try {
+    const entries = Array.isArray(req.body?.entry) ? req.body.entry : []
+
+    for (const entry of entries) {
+      const changes = Array.isArray(entry?.changes) ? entry.changes : []
+
+      for (const change of changes) {
+        if (change?.field !== 'messages') continue
+
+        const value = change?.value || {}
+        const phoneNumberId = text(value?.metadata?.phone_number_id, 80)
+        const messages = Array.isArray(value?.messages) ? value.messages : []
+        const statuses = Array.isArray(value?.statuses) ? value.statuses : []
+
+        for (const message of messages) {
+          const messageId = text(message?.id, 180)
+          if (!messageId) continue
+
+          const eventId = 'WA-MSG-' + messageId
+          if (await WebhookEvent.exists({ id: eventId })) continue
+
+          await WebhookEvent.create({
+            id: eventId,
+            event: 'whatsapp.message.received',
+          }).catch(() => {})
+
+          console.log('WhatsApp webhook: mensagem recebida', {
+            phoneNumberId,
+            from: text(message?.from, 40),
+            type: text(message?.type, 40),
+          })
+        }
+
+        for (const status of statuses) {
+          const messageId = text(status?.id, 180)
+          if (!messageId) continue
+
+          const eventId = [
+            'WA-STATUS',
+            messageId,
+            text(status?.status, 40),
+            text(status?.timestamp, 30),
+          ].join('-')
+
+          if (await WebhookEvent.exists({ id: eventId })) continue
+
+          await WebhookEvent.create({
+            id: eventId,
+            event: 'whatsapp.message.' + text(status?.status || 'status', 40),
+          }).catch(() => {})
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Falha ao processar webhook WhatsApp:', error?.message || error)
+  }
+})
+
 app.post('/api/webhooks/mercadopago', async (req, res) => {
   if (!MERCADOPAGO_WEBHOOK_SECRET) {
     return res.status(503).json({ error: 'Webhook Mercado Pago não configurado.' })
@@ -2715,6 +2834,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    whatsappWebhookConfigured: Boolean(WHATSAPP_VERIFY_TOKEN && WHATSAPP_APP_SECRET),
   })
 })
 
