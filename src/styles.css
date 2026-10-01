@@ -1077,3 +1077,18 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
     width: 100%;
   }
 }
+
+
+/* New-club setup reuses the existing client detail layout. */
+.access-panel-link { display: block; text-align: center; padding: 12px 16px; border-radius: 10px; background: var(--primary, #1769ff); color: white; font-weight: 700; text-decoration: none; margin-top: 12px; }
+.demo-create-option { display: flex !important; align-items: center; gap: 10px; }
+.demo-create-option input { width: auto !important; }
+.license-data pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; margin: 0; }
+.provisioning-section { margin: 20px 0; padding: 18px; border: 1px solid #dce3ec; border-radius: 14px; }
+.provisioning-section p, .provisioning-section li { font-size: 13px; line-height: 1.6; }
+.provisioning-checks { list-style: none; padding: 0; }
+.provisioning-checks li { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #eef1f5; }
+.provisioning-checks li span { flex: 1; }
+.provisioning-checks li strong { color: #956a10; font-size: 12px; }
+.provisioning-checks li.complete strong, .provisioning-checks li.complete svg { color: #13834b; }
+.provisioning-section summary { cursor: pointer; font-weight: 700; margin-top: 16px; }
