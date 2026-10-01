@@ -123,6 +123,112 @@ function Login({ onLogged }) {
   )
 }
 
+function AdminAccessPage({ token }) {
+  const [info, setInfo] = useState(null)
+  const [password, setPassword] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [error, setError] = useState('')
+  const [done, setDone] = useState(false)
+  const [busy, setBusy] = useState(true)
+
+  useEffect(() => {
+    let alive = true
+    setBusy(true)
+    api.adminAccessInfo(token)
+      .then((data) => { if (alive) setInfo(data) })
+      .catch((err) => { if (alive) setError(err.message) })
+      .finally(() => { if (alive) setBusy(false) })
+    return () => { alive = false }
+  }, [token])
+
+  const submit = async (event) => {
+    event.preventDefault()
+    if (busy || done) return
+    if (password.length < 8) {
+      setError('A senha precisa ter pelo menos 8 caracteres.')
+      return
+    }
+    if (password !== confirmation) {
+      setError('As senhas não conferem.')
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    try {
+      await api.completeAdminAccess(token, password, confirmation)
+      setDone(true)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="login-shell">
+      <div className="login-card">
+        <div className="master-brand">
+          <div className="master-brand-mark">CO</div>
+          <div>
+            <strong>ClubeOn</strong>
+            <span>ACESSO DO CLUBE</span>
+          </div>
+        </div>
+
+        <div className="login-icon"><KeyRound /></div>
+        <span className="eyebrow">
+          {info?.purpose === 'reset' ? 'Redefinição de senha' : 'Primeiro acesso'}
+        </span>
+        <h1>{done ? 'Senha definida com sucesso.' : (info?.clubName || 'Acesso administrativo')}</h1>
+        <p>
+          {done
+            ? 'O proprietário já pode acessar o painel do clube usando a nova senha.'
+            : busy
+              ? 'Validando link...'
+              : 'Crie uma senha segura para o painel administrativo do clube.'}
+        </p>
+
+        {!done && !busy && info && (
+          <form onSubmit={submit}>
+            <label>
+              Nova senha
+              <div className="input-icon">
+                <LockKeyhole size={18} />
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Mínimo 8 caracteres"
+                />
+              </div>
+            </label>
+            <label>
+              Confirmar senha
+              <div className="input-icon">
+                <LockKeyhole size={18} />
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmation}
+                  onChange={(e) => setConfirmation(e.target.value)}
+                  placeholder="Repita a senha"
+                />
+              </div>
+            </label>
+
+            {error && <div className="form-error">{error}</div>}
+            <button disabled={busy}>{busy ? 'Salvando...' : 'Salvar nova senha'}</button>
+          </form>
+        )}
+
+        {!busy && !info && error && <div className="form-error">{error}</div>}
+      </div>
+    </div>
+  )
+}
+
 function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'EspaçoOn' }) {
   const [form, setForm] = useState({
     establishmentName: club?.establishmentName || '',
@@ -257,6 +363,7 @@ function LicenseModal({ data, onClose }) {
 }
 
 export default function App() {
+  const adminAccessToken = new URLSearchParams(window.location.search).get('adminAccessToken') || ''
   const [sessionChecked, setSessionChecked] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
   const [active, setActive] = useState('dashboard')
@@ -401,6 +508,7 @@ export default function App() {
     }
   }
 
+  if (adminAccessToken) return <AdminAccessPage token={adminAccessToken} />
   if (!sessionChecked) return <div className="screen-loading">Carregando Master...</div>
   if (!authenticated) return <Login onLogged={() => setAuthenticated(true)} />
 
@@ -939,7 +1047,12 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
               <article>
                 <span>Status do sistema</span>
                 <strong>{club.demoMode ? 'Demonstração' : (statusLabel[club.system?.status] || club.system?.status)}</strong>
-                <small>{club.demoMode ? 'Sem cobrança real • painel sem senha' : 'Última conexão: ' + dateTimeBR(club.system?.lastSeen)}</small>
+                <small>
+                  {club.demoMode
+                    ? 'Sem cobrança real • painel sem senha'
+                    : (club.adminPasswordConfigured ? 'Senha do proprietário configurada' : 'Primeiro acesso pendente') +
+                      ' • Última conexão: ' + dateTimeBR(club.system?.lastSeen)}
+                </small>
               </article>
             </section>
 
@@ -1020,6 +1133,34 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
             </section>
 
             <div className="client-detail-actions">
+              {!club.demoMode && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const result = await api.createAdminAccessLink(
+                        club.id,
+                        club.adminPasswordConfigured ? 'reset' : 'first-access',
+                      )
+                      if (navigator.clipboard?.writeText) {
+                        await navigator.clipboard.writeText(result.url)
+                        window.alert(
+                          club.adminPasswordConfigured
+                            ? 'Link de redefinição copiado. Ele expira em 30 minutos.'
+                            : 'Link de primeiro acesso copiado. Ele expira em 30 minutos.'
+                        )
+                      } else {
+                        window.prompt('Copie o link e envie ao proprietário:', result.url)
+                      }
+                      onRefresh?.()
+                    } catch (error) {
+                      window.alert(error.message || 'Não foi possível gerar o link.')
+                    }
+                  }}
+                >
+                  <KeyRound size={15} />
+                  {club.adminPasswordConfigured ? 'Redefinir senha' : 'Gerar primeiro acesso'}
+                </button>
+              )}
               <button onClick={() => onEdit(club)}><Pencil size={15} /> Editar cadastro</button>
               <button
                 className={club.demoMode ? 'demo-active' : 'demo'}
