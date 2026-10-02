@@ -1,4 +1,4 @@
-import { installReferrals, isReferralMonthlyPayment } from './referrals.js'
+import { installReferrals, isReferralMonthlyPayment, referralPercentage } from './referrals.js'
 import { installRegistrationInvites } from './registration-invites.js'
 import { demoEventRecord, demoAnalyticsSummary, demoLocationSummary, analyticsDay, daysBefore } from './demo-analytics.js'
 import { parseDueDate, nextDueDateFromDay, requireCurrentOrFutureDate } from './billing-dates.js'
@@ -112,7 +112,7 @@ const clubSchema = new mongoose.Schema({
   state: String,
   deletedAt: { type: Date, default: null, index: true },
   demoMode: { type: Boolean, default: false, index: true },
-  referral: { partnerId: String, partnerName: String, amount: Number, inviteId: String },
+  referral: { partnerId: String, partnerName: String, amount: Number, percentage: Number, inviteId: String },
   reservationPaymentProvider: {
     type: String,
     enum: ['asaas', 'mercadopago'],
@@ -196,6 +196,7 @@ const paymentSchema = new mongoose.Schema({
   status: { type: String, enum: ['paid', 'pending', 'cancelled'], default: 'paid' },
   provider: { type: String, default: 'manual' },
   referralEligible: { type: Boolean, default: false },
+  referralPercentage: Number,
   paidAt: Date,
   cycleStart: Date,
   cycleEnd: Date,
@@ -1663,7 +1664,7 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
         status: 'active',
       },
       demoMode: input.demoMode === true,
-      ...(invitation?.referral?.partnerId ? { referral: { partnerId: invitation.referral.partnerId, partnerName: invitation.referral.partnerName, amount: invitation.referral.amount, inviteId: invitation.id } } : {}),
+      ...(invitation?.referral?.partnerId ? { referral: { partnerId: invitation.referral.partnerId, partnerName: invitation.referral.partnerName, percentage: referralPercentage(invitation.referral), inviteId: invitation.id } } : {}),
       system: { status: 'active', publicUrl: input.systemUrl || '' },
       licenseKeyHash: hashLicense(licenseKey),
     })
@@ -2741,6 +2742,7 @@ app.post('/api/master/clubs/:id/mark-paid', requireMaster, writeLimiter, async (
       status: 'paid',
       provider: 'manual',
       referralEligible: club.demoMode !== true && Boolean(club.referral?.partnerId),
+      referralPercentage: referralPercentage(club.referral),
       paidAt: now,
       cycleStart,
       cycleEnd,
@@ -3018,6 +3020,7 @@ app.post('/api/webhooks/asaas', async (req, res, next) => {
               status: 'paid',
               provider: 'asaas',
               referralEligible: isReferralMonthlyPayment(club, payment),
+              referralPercentage: referralPercentage(club.referral),
               paidAt,
               cycleStart: payment.dueDate ? new Date(payment.dueDate + 'T12:00:00') : paidAt,
               cycleEnd: payment.dueDate

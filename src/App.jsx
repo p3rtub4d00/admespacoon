@@ -295,7 +295,7 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa�
           <button className="icon-button" onClick={onClose}><X /></button>
         </div>
 
-        {club?.referral?.partnerId && <p className="referral-help">Indicado por <strong>{club.referral.partnerName}</strong> • Comissão única R$ {Number(club.referral.amount).toFixed(2).replace('.', ',')} após a primeira mensalidade confirmada.</p>}
+        {club?.referral?.partnerId && <p className="referral-help">Indicado por <strong>{club.referral.partnerName}</strong> • Comissão recorrente de {club.referral.percentage ?? 30}% sobre cada mensalidade paga.</p>}
         <form className="club-form" onSubmit={submit}>
           <label>Nome do clube
             <input required minLength={2} value={form.establishmentName}
