@@ -1,5 +1,5 @@
 import { installRegistrationInvites } from './registration-invites.js'
-import { demoEventRecord, demoAnalyticsSummary, analyticsDay, daysBefore } from './demo-analytics.js'
+import { demoEventRecord, demoAnalyticsSummary, demoLocationSummary, analyticsDay, daysBefore } from './demo-analytics.js'
 import { parseDueDate, nextDueDateFromDay, requireCurrentOrFutureDate } from './billing-dates.js'
 import { buildPrivacyPolicy, sanitizePrivacyConfig } from './privacy.js'
 import { normalizeSystemUrl, adminPanelUrl, parseSetupReport, provisioningSummary } from './provisioning.js'
@@ -288,6 +288,7 @@ const demoEventSchema = new mongoose.Schema({
   type: { type: String, required: true },
   day: { type: String, required: true },
   eventKey: { type: String, required: true },
+  location: { city: String, region: String, country: String, countryCode: String },
   createdAt: { type: Date, required: true },
   expiresAt: { type: Date, required: true },
 })
@@ -1472,9 +1473,9 @@ app.get('/api/master/demo-analytics', requireMaster, async (_req, res, next) => 
     const today = analyticsDay()
     const rows = ids.length ? await DemoEvent.aggregate([
       { $match: { clubId: { $in: ids }, day: { $gte: daysBefore(today, 89), $lte: today }, expiresAt: { $gt: new Date() } } },
-      { $group: { _id: { day: '$day', type: '$type' }, count: { $sum: 1 } } },
+      { $group: { _id: { day: '$day', type: '$type', location: { city: '$location.city', region: '$location.region', country: '$location.country', countryCode: '$location.countryCode' } }, count: { $sum: 1 } } },
     ]) : []
-    res.json({ ...demoAnalyticsSummary(rows), demoClubs: clubs.filter(club => ids.includes(club.id)).map(club => ({ id: club.id, name: club.establishmentName })) })
+    res.json({ ...demoAnalyticsSummary(rows), locations: demoLocationSummary(rows), demoClubs: clubs.filter(club => ids.includes(club.id)).map(club => ({ id: club.id, name: club.establishmentName })) })
   } catch (error) { next(error) }
 })
 

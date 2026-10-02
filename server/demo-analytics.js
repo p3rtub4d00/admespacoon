@@ -19,7 +19,8 @@ export function demoEventRecord(clubId, input, secret, now = new Date()) {
   const day = analyticsDay(now)
   const bucket = input.type === 'reservation_completed' ? '' : day
   const eventKey = crypto.createHmac('sha256', secret).update([clubId, input.type, bucket, input.eventId].join('|')).digest('hex')
-  return { clubId, type: input.type, day, eventKey, createdAt: now, expiresAt: new Date(now.getTime() + DEMO_RETENTION_DAYS * 86400000) }
+  const location = input.type === 'visit' ? sanitizeDemoLocation(input.location) : null
+  return { clubId, type: input.type, day, eventKey, ...(location ? { location } : {}), createdAt: now, expiresAt: new Date(now.getTime() + DEMO_RETENTION_DAYS * 86400000) }
 }
 export function demoAnalyticsSummary(rows, now = new Date()) {
   const today = analyticsDay(now)
@@ -39,4 +40,32 @@ export function demoAnalyticsSummary(rows, now = new Date()) {
     if (target) target[type] += count
   }
   return { periods, daily, timezone: 'America/Manaus', updatedAt: now.toISOString() }
+}
+
+export function sanitizeDemoLocation(value) {
+  const clean = field => typeof field === 'string' ? field.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0,80) : ''
+  const countryCode = clean(value?.countryCode).toUpperCase()
+  if (!/^[A-Z]{2}$/.test(countryCode)) return null
+  return { city: clean(value.city), region: clean(value.region), country: clean(value.country), countryCode }
+}
+
+export function demoLocationSummary(rows, now = new Date()) {
+  const today = analyticsDay(now)
+  const starts = { today, last7: daysBefore(today,6), month: today.slice(0,7) + '-01' }
+  return Object.fromEntries(Object.entries(starts).map(([period,start]) => {
+    const locations = new Map()
+    let total = 0, unknown = 0
+    for (const row of rows) {
+      if (row._id.type !== 'visit' || row._id.day < start || row._id.day > today) continue
+      const count = Number(row.count) || 0
+      total += count
+      const location = sanitizeDemoLocation(row._id.location)
+      if (!location) { unknown += count; continue }
+      const key = JSON.stringify(location)
+      const previous = locations.get(key)
+      locations.set(key, { ...location, count: (previous?.count || 0) + count })
+    }
+    const ranked = [...locations.values()].sort((a,b) => b.count - a.count || JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    return [period, { rows: ranked.slice(0,20), total, unknown, other: ranked.slice(20).reduce((sum,row) => sum + row.count,0) }]
+  }))
 }

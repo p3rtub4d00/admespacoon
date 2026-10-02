@@ -39,6 +39,15 @@ export default function DemoAnalytics() {
       {!data.demoClubs?.length && <p className="demo-analytics-note">Nenhum clube está em demonstração. Ative o modo demonstração no cadastro do piloto.</p>}
       {data.demoClubs?.length > 0 && <p className="demo-analytics-note">Demonstrações acompanhadas: {data.demoClubs.map(club => club.name).join(', ')}.</p>}
       <div className="table-wrap"><table><caption className="demo-table-caption">Movimento dos últimos 7 dias</caption><thead><tr><th>Dia</th>{metrics.map(([key, label]) => <th key={key}>{label}</th>)}</tr></thead><tbody>{data.daily.map(row => <tr key={row.day}><td>{row.day.split('-').reverse().join('/')}</td>{metrics.map(([key]) => <td key={key}>{row[key]}</td>)}</tr>)}</tbody></table></div>
+      <div className="demo-location-section">
+        <h3>De onde vêm as visitas</h3>
+        <p className="demo-analytics-note">Localização aproximada por IP, no período selecionado. São acessos ao site; não representam todas as pessoas que viram seus anúncios. VPNs e redes móveis podem indicar outra cidade.</p>
+        <div className="table-wrap"><table><caption className="demo-table-caption">Até 20 localidades com mais visitas</caption><thead><tr><th>Cidade</th><th>Estado / região</th><th>País</th><th>Visitas</th></tr></thead><tbody>
+          {(data.locations?.[period]?.rows || []).map(row => <tr key={JSON.stringify([row.city,row.region,row.countryCode,row.country])}><td>{row.city || 'Não identificada'}</td><td>{row.region || 'Não identificado'}</td><td>{row.country || row.countryCode}</td><td>{row.count}</td></tr>)}
+          <tr><td colSpan={3}>Localização não identificada (inclui acessos antigos)</td><td>{data.locations?.[period]?.unknown ?? data.periods?.[period]?.visit ?? 0}</td></tr>
+          {(data.locations?.[period]?.other || 0) > 0 && <tr><td colSpan={3}>Outras localidades</td><td>{data.locations[period].other}</td></tr>}
+        </tbody></table></div>
+      </div>
       <p className="demo-analytics-note">Visitas e ações são contadas uma vez por aba/sessão, por dia. Reservas são contadas por conclusão. Os números podem incluir seus testes e não representam pessoas únicas nem mensagens enviadas no WhatsApp. A coleta começa após esta atualização e pode ser limitada pelo navegador ou pela conexão.</p>
       <p className="demo-analytics-note">Horário de Manaus. Atualizado às {new Date(data.updatedAt).toLocaleTimeString('pt-BR', { timeZone: data.timezone })}.</p>
     </>}

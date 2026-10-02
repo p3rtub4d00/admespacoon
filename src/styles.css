@@ -1138,3 +1138,6 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
 
 .registration-card .full { grid-column: 1 / -1; }
 .registration-card .registration-ack input { min-height: 18px; margin-top: 0; padding: 0; }
+
+.demo-location-section { margin-top: 20px; }
+.demo-location-section h3 { margin: 0; padding: 0 24px 12px; color: #183c5c; font-size: 18px; }
