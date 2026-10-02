@@ -1174,3 +1174,8 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
 .referral-invite-select { display:block; margin:18px 0 6px; max-width:420px; }.referral-invite-select small { display:block; margin-top:8px; line-height:1.5; color:#597182; }.referral-invite-credit { color:#1763aa; }
 @media(max-width:760px) { .referral-totals { grid-template-columns:repeat(2,minmax(0,1fr)); }.referral-form { grid-template-columns:1fr; }.referral-filter { align-items:stretch; flex-direction:column; } }
 @media(max-width:480px) { .referral-help,.referral-success,.referral-totals,.referral-filter { padding-left:16px; padding-right:16px; }.referral-form { margin-left:16px; margin-right:16px; } }
+
+.referral-clients-modal { width:min(760px,95vw); max-height:85vh; overflow:auto; }
+.referral-clients-modal p { font-size:14px; line-height:1.6; }
+.referral-totals { grid-template-columns:repeat(3,minmax(0,1fr)); }
+@media(max-width:480px) { .referral-totals { grid-template-columns:1fr; } }

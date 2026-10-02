@@ -15,7 +15,7 @@ export function installRegistrationInvites({ app, mongoose, requireMaster, write
     submittedAt: Date,
     revokedAt: Date,
     approvedAt: Date,
-    referral: { partnerId: String, partnerName: String, amount: Number },
+    referral: { partnerId: String, partnerName: String, amount: Number, percentage: Number },
     registration: {
       establishmentName: String, ownerName: String, cpfCnpj: String,
       phone: String, email: String, city: String, state: String,
