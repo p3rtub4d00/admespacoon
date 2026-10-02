@@ -1179,3 +1179,15 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
 .referral-clients-modal p { font-size:14px; line-height:1.6; }
 .referral-totals { grid-template-columns:repeat(3,minmax(0,1fr)); }
 @media(max-width:480px) { .referral-totals { grid-template-columns:1fr; } }
+
+.partner-row-actions { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.referral-panel td .partner-action { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; margin:0; padding:10px 14px; border:1px solid transparent; border-radius:10px; font:inherit; font-size:13px; font-weight:700; line-height:1.2; white-space:nowrap; cursor:pointer; transition:background-color .15s,border-color .15s,box-shadow .15s; }
+.partner-action svg { flex-shrink:0; }
+.referral-panel td .partner-action-primary { background:#1763aa; color:#fff; border-color:#1763aa; box-shadow:0 2px 5px #1763aa1a; }
+.referral-panel td .partner-action-primary:hover:not(:disabled) { background:#124e87; border-color:#124e87; }
+.partner-client-count { display:inline-flex; align-items:center; justify-content:center; min-width:24px; min-height:24px; padding:2px 6px; border-radius:7px; background:#ffffff26; font-size:12px; font-variant-numeric:tabular-nums; }
+.referral-panel td .partner-action-secondary { background:#f8fbff; color:#315775; border-color:#dce6f0; }
+.referral-panel td .partner-action-secondary:hover:not(:disabled) { background:#eaf2fb; border-color:#a9c2dc; }
+.referral-panel td .partner-action:focus-visible { outline:3px solid #91c5ff; outline-offset:3px; }
+.referral-panel td .partner-action:disabled { opacity:.55; cursor:wait; box-shadow:none; }
+@media(max-width:640px) { .partner-row-actions { align-items:stretch; flex-direction:column; }.referral-panel td .partner-action { width:100%; } }
