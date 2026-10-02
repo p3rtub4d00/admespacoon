@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { RefreshCcw, Eye, LayoutDashboard, MessageCircle, CheckCircle2 } from 'lucide-react'
+import { RefreshCcw, Eye, LayoutDashboard, MessageCircle, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react'
 import { api } from './api'
 
 const metrics = [
@@ -9,12 +9,14 @@ const metrics = [
   ['reservation_completed', 'Reservas simuladas', CheckCircle2],
 ]
 export default function DemoAnalytics() {
+  const [expanded, setExpanded] = useState(false)
   const [data, setData] = useState(null)
   const [period, setPeriod] = useState('last7')
   const [refresh, setRefresh] = useState(0)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
+    if (!expanded) return
     let active = true
     setLoading(true)
     setError('')
@@ -22,12 +24,15 @@ export default function DemoAnalytics() {
       .catch(err => { if (active) setError(err.message) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [refresh])
+  }, [refresh, expanded])
   return <section className="content-card demo-analytics" aria-labelledby="demo-analytics-title">
-    <div className="card-head">
-      <div><span>Demonstração comercial</span><h2 id="demo-analytics-title">Acessos à demonstração</h2></div>
-      <button disabled={loading} onClick={() => setRefresh(value => value + 1)}><RefreshCcw size={16} />{loading ? 'Atualizando...' : 'Atualizar'}</button>
+    <div className="demo-analytics-summary">
+      <div className="demo-analytics-summary-title"><Eye size={20} /><div><h2 id="demo-analytics-title">Acessos à demonstração</h2><p>Visitas, cliques e localização aproximada.</p></div></div>
+      <button type="button" aria-expanded={expanded} aria-controls="demo-analytics-details" onClick={() => setExpanded(value => !value)}>{expanded ? 'Recolher' : 'Ver detalhes'}{expanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}</button>
     </div>
+    <div id="demo-analytics-details" hidden={!expanded}>
+      <div className="demo-analytics-tools"><button type="button" disabled={loading} onClick={() => setRefresh(value => value + 1)}><RefreshCcw size={16} />{loading ? 'Atualizando...' : 'Atualizar'}</button></div>
+      {loading && !data && <p className="demo-analytics-note" role="status">Carregando indicadores...</p>}
     <div className="demo-periods" aria-label="Período dos indicadores">
       {[['today', 'Hoje'], ['last7', 'Últimos 7 dias'], ['month', 'Mês atual']].map(([key, label]) => <button key={key} aria-pressed={period === key} className={period === key ? 'selected' : ''} onClick={() => setPeriod(key)}>{label}</button>)}
     </div>
@@ -51,5 +56,6 @@ export default function DemoAnalytics() {
       <p className="demo-analytics-note">Visitas e ações são contadas uma vez por aba/sessão, por dia. Reservas são contadas por conclusão. Os números podem incluir seus testes e não representam pessoas únicas nem mensagens enviadas no WhatsApp. A coleta começa após esta atualização e pode ser limitada pelo navegador ou pela conexão.</p>
       <p className="demo-analytics-note">Horário de Manaus. Atualizado às {new Date(data.updatedAt).toLocaleTimeString('pt-BR', { timeZone: data.timezone })}.</p>
     </>}
+    </div>
   </section>
 }
