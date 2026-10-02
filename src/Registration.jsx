@@ -54,15 +54,17 @@ export function RegistrationPage({ token }) {
 
 export function RegistrationInvites({ refreshKey, onReview }) {
   const [rows, setRows] = useState([])
+  const [partners, setPartners] = useState([])
+  const [partnerId, setPartnerId] = useState('')
   const [link, setLink] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
-  const load = async () => { try { setRows(await api.registrationInvites()); setError('') } catch (err) { setError(err.message) } }
+  const load = async () => { try { const [invites, list] = await Promise.all([api.registrationInvites(), api.referralPartners()]); setRows(invites); setPartners(list); setError('') } catch (err) { setError(err.message) } }
   useEffect(() => { void load() }, [refreshKey])
   const create = async () => {
     setBusy(true); setError(''); setCopied(false)
-    try { setLink(await api.createRegistrationInvite()); await load() } catch (err) { setError(err.message) } finally { setBusy(false) }
+    try { setLink(await api.createRegistrationInvite({ partnerId })); await load() } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
   const revoke = async id => {
     setBusy(true)
@@ -70,8 +72,9 @@ export function RegistrationInvites({ refreshKey, onReview }) {
   }
   return <div className="registration-invites">
     <div className="registration-head"><div><h3>Cadastro por convite</h3><p>Envie um link para o proprietário preencher os dados. Depois, revise e configure o clube aqui.</p></div><button className="primary-wide" disabled={busy} onClick={create}><Link2 size={17} /> Gerar link de cadastro</button></div>
+    <label className="referral-invite-select">Indicado por (opcional)<select value={partnerId} disabled={busy} onChange={e => setPartnerId(e.target.value)}><option value="">Sem indicação</option>{partners.filter(partner => partner.active).map(partner => <option key={partner.id} value={partner.id}>{partner.name} • R$ {Number(partner.commissionAmount).toFixed(2).replace('.', ',')}</option>)}</select><small>Cadastre os parceiros na seção Parceiros. O vínculo e o valor ficam salvos neste convite.</small></label>
     {error && <div className="form-error" role="alert">{error}</div>}
-    {rows.length > 0 && <div className="registration-list">{rows.map(row => <article key={row.id}><div><strong>{row.registration?.establishmentName || 'Convite aguardando preenchimento'}</strong><p>{row.submittedAt ? 'Cadastro recebido • ' + row.registration.ownerName : 'Link ' + (new Date(row.expiresAt) > new Date() ? 'válido até ' : 'expirado em ') + new Date(row.expiresAt).toLocaleString('pt-BR')}</p></div><div className="registration-row-actions">{row.submittedAt && <button disabled={busy} onClick={() => onReview({ ...row.registration, registrationInviteId: row.id })}>Revisar e concluir</button>}<button className="secondary" disabled={busy} onClick={() => revoke(row.id)}>Revogar</button></div></article>)}</div>}
-    {link && <div className="modal-backdrop"><div className="modal registration-link-modal"><div className="modal-head"><div><span>Convite individual</span><h2>Link de cadastro criado</h2></div><button className="icon-button" aria-label="Fechar" onClick={() => setLink(null)}><X /></button></div><p>Envie este link somente ao proprietário. Ele aceita um único cadastro e vence em {new Date(link.expiresAt).toLocaleString('pt-BR')}.</p><label>Link para compartilhar<input readOnly value={link.url} onFocus={e => e.target.select()} /></label><p>Copie antes de fechar. Por segurança, o link completo não fica salvo no painel. Se necessário, revogue este convite e gere outro.</p><button className="primary-wide" onClick={async () => { try { await navigator.clipboard.writeText(link.url); setCopied(true) } catch { setError('Selecione o link e copie manualmente.') } }}>{copied ? 'Link copiado!' : 'Copiar link'}</button></div></div>}
+    {rows.length > 0 && <div className="registration-list">{rows.map(row => <article key={row.id}><div><strong>{row.registration?.establishmentName || 'Convite aguardando preenchimento'}</strong><p>{row.submittedAt ? 'Cadastro recebido • ' + row.registration.ownerName : 'Link ' + (new Date(row.expiresAt) > new Date() ? 'válido até ' : 'expirado em ') + new Date(row.expiresAt).toLocaleString('pt-BR')}</p>{row.referral?.partnerId && <p className="referral-invite-credit">Indicação: {row.referral.partnerName} • Comissão única R$ {Number(row.referral.amount).toFixed(2).replace('.', ',')}</p>}</div><div className="registration-row-actions">{row.submittedAt && <button disabled={busy} onClick={() => onReview({ ...row.registration, registrationInviteId: row.id, referral: row.referral })}>Revisar e concluir</button>}<button className="secondary" disabled={busy} onClick={() => revoke(row.id)}>Revogar</button></div></article>)}</div>}
+    {link && <div className="modal-backdrop"><div className="modal registration-link-modal"><div className="modal-head"><div><span>Convite individual</span><h2>Link de cadastro criado</h2></div><button className="icon-button" aria-label="Fechar" onClick={() => setLink(null)}><X /></button></div><p>Envie este link somente ao proprietário. Ele aceita um único cadastro e vence em {new Date(link.expiresAt).toLocaleString('pt-BR')}.</p>{link.referral && <p>Indicado por <strong>{link.referral.partnerName}</strong>. Comissão única: R$ {Number(link.referral.amount).toFixed(2).replace('.', ',')} após a primeira mensalidade confirmada.</p>}<label>Link para compartilhar<input readOnly value={link.url} onFocus={e => e.target.select()} /></label><p>Copie antes de fechar. Por segurança, o link completo não fica salvo no painel. Se necessário, revogue este convite e gere outro.</p><button className="primary-wide" onClick={async () => { try { await navigator.clipboard.writeText(link.url); setCopied(true) } catch { setError('Selecione o link e copie manualmente.') } }}>{copied ? 'Link copiado!' : 'Copiar link'}</button></div></div>}
   </div>
 }

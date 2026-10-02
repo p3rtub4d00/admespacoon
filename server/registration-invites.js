@@ -6,7 +6,7 @@ export function registrationTokenHash(token) {
   return crypto.createHash('sha256').update(token).digest('hex')
 }
 
-export function installRegistrationInvites({ app, mongoose, requireMaster, writeLimiter, validateClubInput }) {
+export function installRegistrationInvites({ app, mongoose, requireMaster, writeLimiter, validateClubInput, referralSnapshot }) {
   const schema = new mongoose.Schema({
     id: { type: String, required: true, unique: true, index: true },
     clubId: { type: String, required: true, unique: true },
@@ -15,6 +15,7 @@ export function installRegistrationInvites({ app, mongoose, requireMaster, write
     submittedAt: Date,
     revokedAt: Date,
     approvedAt: Date,
+    referral: { partnerId: String, partnerName: String, amount: Number },
     registration: {
       establishmentName: String, ownerName: String, cpfCnpj: String,
       phone: String, email: String, city: String, state: String,
@@ -28,17 +29,18 @@ export function installRegistrationInvites({ app, mongoose, requireMaster, write
     try {
       const base = new URL(process.env.PUBLIC_BASE_URL || (req.protocol + '://' + req.get('host')))
       if (process.env.NODE_ENV === 'production' && base.protocol !== 'https:') throw Object.assign(new Error('Configure PUBLIC_BASE_URL com o endereço HTTPS do painel master.'), { statusCode: 400 })
+      const referral = await referralSnapshot(req.body?.partnerId)
       const rawToken = crypto.randomBytes(32).toString('base64url')
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
       const id = crypto.randomUUID()
-      await Invite.create({ id, clubId: 'CLB-' + crypto.randomUUID(), tokenHash: registrationTokenHash(rawToken), expiresAt })
-      res.status(201).json({ id, expiresAt, url: base.origin + '/cadastro#convite=' + rawToken })
+      await Invite.create({ id, clubId: 'CLB-' + crypto.randomUUID(), tokenHash: registrationTokenHash(rawToken), expiresAt, ...(referral ? { referral } : {}) })
+      res.status(201).json({ id, expiresAt, referral, url: base.origin + '/cadastro#convite=' + rawToken })
     } catch (error) { next(error) }
   })
   app.get('/api/master/registration-invites', requireMaster, async (_req, res, next) => {
     try {
       const rows = await Invite.find({ approvedAt: null, revokedAt: null }).sort({ createdAt: -1 }).limit(100).lean()
-      res.json(rows.map(row => ({ id: row.id, expiresAt: row.expiresAt, submittedAt: row.submittedAt || null, createdAt: row.createdAt, registration: row.submittedAt ? row.registration : null })))
+      res.json(rows.map(row => ({ id: row.id, expiresAt: row.expiresAt, submittedAt: row.submittedAt || null, createdAt: row.createdAt, registration: row.submittedAt ? row.registration : null, referral: row.referral?.partnerId ? row.referral : null })))
     } catch (error) { next(error) }
   })
   app.delete('/api/master/registration-invites/:id', requireMaster, writeLimiter, async (req, res, next) => {

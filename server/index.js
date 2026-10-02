@@ -1,3 +1,4 @@
+import { installReferrals, isReferralMonthlyPayment } from './referrals.js'
 import { installRegistrationInvites } from './registration-invites.js'
 import { demoEventRecord, demoAnalyticsSummary, demoLocationSummary, analyticsDay, daysBefore } from './demo-analytics.js'
 import { parseDueDate, nextDueDateFromDay, requireCurrentOrFutureDate } from './billing-dates.js'
@@ -111,6 +112,7 @@ const clubSchema = new mongoose.Schema({
   state: String,
   deletedAt: { type: Date, default: null, index: true },
   demoMode: { type: Boolean, default: false, index: true },
+  referral: { partnerId: String, partnerName: String, amount: Number, inviteId: String },
   reservationPaymentProvider: {
     type: String,
     enum: ['asaas', 'mercadopago'],
@@ -193,6 +195,7 @@ const paymentSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   status: { type: String, enum: ['paid', 'pending', 'cancelled'], default: 'paid' },
   provider: { type: String, default: 'manual' },
+  referralEligible: { type: Boolean, default: false },
   paidAt: Date,
   cycleStart: Date,
   cycleEnd: Date,
@@ -1268,6 +1271,7 @@ function publicClub(club) {
     city: club.city,
     state: club.state,
     demoMode: club.demoMode === true,
+    referral: club.referral?.partnerId ? club.referral : null,
     reservationPaymentProvider: club.reservationPaymentProvider || 'asaas',
     plan: club.plan,
     billing: club.billing,
@@ -1619,7 +1623,8 @@ app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) =
   }
 })
 
-const RegistrationInvite = installRegistrationInvites({ app, mongoose, requireMaster, writeLimiter, validateClubInput })
+const referrals = installReferrals({ app, mongoose, Club, Payment, requireMaster, writeLimiter, logAction })
+const RegistrationInvite = installRegistrationInvites({ app, mongoose, requireMaster, writeLimiter, validateClubInput, referralSnapshot: referrals.snapshot })
 
 app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next) => {
   try {
@@ -1658,11 +1663,14 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
         status: 'active',
       },
       demoMode: input.demoMode === true,
+      ...(invitation?.referral?.partnerId ? { referral: { partnerId: invitation.referral.partnerId, partnerName: invitation.referral.partnerName, amount: invitation.referral.amount, inviteId: invitation.id } } : {}),
       system: { status: 'active', publicUrl: input.systemUrl || '' },
       licenseKeyHash: hashLicense(licenseKey),
     })
 
     if (invitation) await RegistrationInvite.updateOne({ id: invitation.id }, { $set: { approvedAt: new Date() } })
+
+    await referrals.safeSync(club)
 
     await logAction('club.created', 'Novo cliente cadastrado no EspaçoOn Master.', club)
 
@@ -2732,6 +2740,7 @@ app.post('/api/master/clubs/:id/mark-paid', requireMaster, writeLimiter, async (
       amount: Math.round(amount * 100) / 100,
       status: 'paid',
       provider: 'manual',
+      referralEligible: club.demoMode !== true && Boolean(club.referral?.partnerId),
       paidAt: now,
       cycleStart,
       cycleEnd,
@@ -2745,6 +2754,7 @@ app.post('/api/master/clubs/:id/mark-paid', requireMaster, writeLimiter, async (
     club.system.temporaryUnlockUntil = null
     await club.save()
 
+    await referrals.safeSync(club)
     await logAction('billing.payment_registered', 'Mensalidade registrada como paga.', club, { amount })
     res.json(publicClub(club))
   } catch (error) {
@@ -3007,6 +3017,7 @@ app.post('/api/webhooks/asaas', async (req, res, next) => {
               amount,
               status: 'paid',
               provider: 'asaas',
+              referralEligible: isReferralMonthlyPayment(club, payment),
               paidAt,
               cycleStart: payment.dueDate ? new Date(payment.dueDate + 'T12:00:00') : paidAt,
               cycleEnd: payment.dueDate
@@ -3031,6 +3042,7 @@ app.post('/api/webhooks/asaas', async (req, res, next) => {
         club.billing.currentPaymentId = payment.id || club.billing.currentPaymentId
         await club.save()
 
+        await referrals.safeSync(club)
         await logAction('billing.payment_confirmed', 'Pagamento Asaas confirmado e sistema liberado automaticamente.', club, {
           paymentId: payment.id,
           event,
@@ -3058,6 +3070,10 @@ app.post('/api/webhooks/asaas', async (req, res, next) => {
       }
 
       if (['PAYMENT_REFUNDED', 'PAYMENT_DELETED'].includes(event)) {
+        if (payment.id) {
+          await Payment.updateOne({ id: 'ASAAS-' + String(payment.id), clubId: club.id }, { $set: { status: 'cancelled' } })
+          await referrals.safeSync(club)
+        }
         club.billing.status = 'past_due'
         await club.save()
         await logAction('billing.payment_reversed', 'Pagamento Asaas revertido ou removido.', club, {

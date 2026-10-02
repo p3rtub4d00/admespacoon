@@ -1,3 +1,4 @@
+import ReferralPartners from './ReferralPartners'
 import { RegistrationPage, RegistrationInvites } from './Registration'
 import DemoAnalytics from './DemoAnalytics'
 import PrivacyPage from './PrivacyPage'
@@ -294,6 +295,7 @@ function ClubModal({ club, onClose, onSaved, planPrice = 49.9, planName = 'Espa�
           <button className="icon-button" onClick={onClose}><X /></button>
         </div>
 
+        {club?.referral?.partnerId && <p className="referral-help">Indicado por <strong>{club.referral.partnerName}</strong> • Comissão única R$ {Number(club.referral.amount).toFixed(2).replace('.', ',')} após a primeira mensalidade confirmada.</p>}
         <form className="club-form" onSubmit={submit}>
           <label>Nome do clube
             <input required minLength={2} value={form.establishmentName}
@@ -579,6 +581,7 @@ function App() {
     ['dashboard', 'Visão geral', LayoutDashboard],
     ['clubs', 'Clientes', Building2],
     ['billing', 'Cobranças', WalletCards],
+    ['referrals', 'Parceiros', Users],
     ['settings', 'Configurações', Settings],
     ['notifications', 'Notificações', BellRing],
     ['logs', 'Logs', FileClock],
@@ -666,6 +669,8 @@ function App() {
             <ClubTable clubs={filteredClubs} setModalClub={setModalClub} act={act} setLicenseData={setLicenseData} setDetailClubId={setDetailClubId} />
           </section>
         )}
+
+        {active === 'referrals' && <ReferralPartners />}
 
         {active === 'billing' && (
           <section className="content-card">
