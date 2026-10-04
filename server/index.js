@@ -293,6 +293,7 @@ const demoEventSchema = new mongoose.Schema({
   day: { type: String, required: true },
   eventKey: { type: String, required: true },
   location: { city: String, region: String, country: String, countryCode: String },
+  locationStatus: String,
   createdAt: { type: Date, required: true },
   expiresAt: { type: Date, required: true },
 })
@@ -1478,7 +1479,7 @@ app.get('/api/master/demo-analytics', requireMaster, async (_req, res, next) => 
     const today = analyticsDay()
     const rows = ids.length ? await DemoEvent.aggregate([
       { $match: { clubId: { $in: ids }, day: { $gte: daysBefore(today, 89), $lte: today }, expiresAt: { $gt: new Date() } } },
-      { $group: { _id: { day: '$day', type: '$type', location: { city: '$location.city', region: '$location.region', country: '$location.country', countryCode: '$location.countryCode' } }, count: { $sum: 1 } } },
+      { $group: { _id: { day: '$day', type: '$type', locationStatus:'$locationStatus', location: { city: '$location.city', region: '$location.region', country: '$location.country', countryCode: '$location.countryCode' } }, count: { $sum: 1 } } },
     ]) : []
     res.json({ ...demoAnalyticsSummary(rows), locations: demoLocationSummary(rows), demoClubs: clubs.filter(club => ids.includes(club.id)).map(club => ({ id: club.id, name: club.establishmentName })) })
   } catch (error) { next(error) }

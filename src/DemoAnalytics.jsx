@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { RefreshCcw, Eye, LayoutDashboard, MessageCircle, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react'
 import { api } from './api'
 
+const locationReasons = { no_public_ip:'Endereço público do visitante indisponível', provider_timeout:'Consulta de localização demorou demais', provider_error:'Serviço de localização indisponível', provider_rate_limit:'Limite do serviço de localização atingido', local_limit:'Consulta limitada temporariamente pelo site', not_available:'Localização ausente na base do provedor', legacy:'Acesso antigo ou sem diagnóstico de localização' }
+
 const metrics = [
   ['visit', 'Visitas à página', Eye],
   ['admin_open', 'Acessos ao painel', LayoutDashboard],
@@ -52,6 +54,7 @@ export default function DemoAnalytics() {
           <tr><td colSpan={3}>Localização não identificada (inclui acessos antigos)</td><td>{data.locations?.[period]?.unknown ?? data.periods?.[period]?.visit ?? 0}</td></tr>
           {(data.locations?.[period]?.other || 0) > 0 && <tr><td colSpan={3}>Outras localidades</td><td>{data.locations[period].other}</td></tr>}
         </tbody></table></div>
+        {Object.entries(data.locations?.[period]?.reasons || {}).length > 0 && <div className="demo-analytics-note"><strong>Por que alguns acessos não têm localização?</strong><ul>{Object.entries(data.locations[period].reasons).map(([reason,count])=><li key={reason}>{locationReasons[reason] || 'Sem diagnóstico'}: {count}</li>)}</ul><p>Acessos antigos não podem ser localizados retroativamente, pois os IPs não são armazenados.</p></div>}
       </div>
       <p className="demo-analytics-note">Visitas e ações são contadas uma vez por aba/sessão, por dia. Reservas são contadas por conclusão. Os números podem incluir seus testes e não representam pessoas únicas nem mensagens enviadas no WhatsApp. A coleta começa após esta atualização e pode ser limitada pelo navegador ou pela conexão.</p>
       <p className="demo-analytics-note">Horário de Manaus. Atualizado às {new Date(data.updatedAt).toLocaleTimeString('pt-BR', { timeZone: data.timezone })}.</p>

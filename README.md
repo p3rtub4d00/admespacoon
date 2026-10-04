@@ -172,3 +172,7 @@ Publicação: somente o Master no Render, sem novas variáveis/dependências. Ap
 Código anterior às indicações: branch `restore/before-referrals-2026-10-02`, commit `01f9d1550f4adca4dd60ad8a5c3564dc6b1d7368`. Pode ser selecionado como commit anterior no Render ou usado para criar uma reversão no GitHub. Esse ponto preserva código, não é snapshot de banco. As adições são opcionais e os novos campos/coleções podem permanecer no banco após voltar ao código anterior; os dados não são removidos automaticamente. Preserve os registros financeiros e de repasses ao reverter.
 
 Ponto adicional anterior à comissão recorrente: `restore/before-recurring-referrals-2026-10-02`, commit `689f7ee33ea48b97d4f2832122e27c1a87646edc`. Ao reverter, preservar as duas coleções e revisar o histórico recorrente antes de registrar novos repasses na versão antiga, que não o consulta.
+
+### Diagnóstico das visitas sem localização
+
+As visitas novas do demo podem incluir `locationStatus`, restrito a códigos fixos de resultado da consulta. O relatório agrega os motivos por período e exibe timeout, quota, indisponibilidade, IP público ausente ou dados não disponíveis. Visitas anteriores sem esse campo aparecem como antigas/sem diagnóstico; não há recuperação retroativa de localização, porque o IP não foi armazenado. Não são aceitos IPs nem mensagens brutas de erro nesse campo. Publicar também a correção de coleta no serviço do demo.
