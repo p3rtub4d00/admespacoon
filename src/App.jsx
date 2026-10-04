@@ -1,3 +1,4 @@
+import CatalogAdmin from './CatalogAdmin'
 import ReferralPartners from './ReferralPartners'
 import { RegistrationPage, RegistrationInvites } from './Registration'
 import DemoAnalytics from './DemoAnalytics'
@@ -580,6 +581,7 @@ function App() {
   const nav = [
     ['dashboard', 'Visão geral', LayoutDashboard],
     ['clubs', 'Clientes', Building2],
+    ['catalog', 'Catálogo', Search],
     ['billing', 'Cobranças', WalletCards],
     ['referrals', 'Parceiros', Users],
     ['settings', 'Configurações', Settings],
@@ -671,6 +673,7 @@ function App() {
         )}
 
         {active === 'referrals' && <ReferralPartners />}
+        {active === 'catalog' && <CatalogAdmin />}
 
         {active === 'billing' && (
           <section className="content-card">

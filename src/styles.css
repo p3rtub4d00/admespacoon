@@ -1204,3 +1204,24 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
 .registration-invite-option > button:focus-visible { outline:3px solid #91c5ff; outline-offset:3px; }
 .registration-invite-option > button:disabled { opacity:.55; cursor:not-allowed; }
 @media(max-width:700px) { .registration-invite-options { grid-template-columns:1fr; } }
+
+/* Catálogo gratuito: separado dos clientes e cobranças. */
+.catalog-toolbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:16px 0; }
+.catalog-toolbar h2 { margin-right:auto; }
+.catalog-admin-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; margin:18px 0; }
+.catalog-admin-grid img { width:100%; height:170px; object-fit:cover; border-radius:12px; }
+.catalog-review { background:white; border-radius:18px; padding:24px; width:min(820px,95vw); max-height:90dvh; overflow:auto; }
+.catalog-review label { display:block; margin:12px 0; }
+.catalog-review input:not([type=checkbox]),.catalog-review select,.catalog-review textarea { display:block; width:100%; margin-top:6px; padding:10px; border:1px solid #d7e0ea; border-radius:8px; }
+.catalog-review textarea { min-height:90px; }
+.catalog-fields { display:grid; grid-template-columns:1fr 1fr; gap:0 18px; }
+.catalog-review .catalog-check { display:inline-flex; align-items:center; gap:8px; margin:8px 16px 8px 0; }
+.catalog-photos { display:flex; gap:8px; overflow:auto; }
+.catalog-photos img { width:140px; height:100px; object-fit:cover; border-radius:8px; }
+@media(max-width:800px) { .catalog-admin-grid { grid-template-columns:1fr; } .catalog-fields { grid-template-columns:1fr; } }
+.catalog-admin .card { padding:20px; border:1px solid var(--border); border-radius:17px; background:white; }
+.catalog-admin button:not(.catalog-check button) { padding:10px 15px; border:1px solid #cfdeed; border-radius:9px; background:#eff6ff; color:#24619b; font-weight:700; }
+.catalog-admin select { padding:10px; border:1px solid #cfdeed; border-radius:9px; }
+.catalog-review .primary { background:#177ed7; color:white; }
+.catalog-review { border:0; box-shadow:0 30px 90px #14314c40; }
+.catalog-review::backdrop { background:#0a1f3094; backdrop-filter:blur(5px); }
