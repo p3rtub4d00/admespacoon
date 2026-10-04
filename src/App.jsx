@@ -630,7 +630,7 @@ function App() {
               if (id === 'catalog') setCatalogReviewId(null)
               setMobileOpen(false)
             }}>
-              <Icon size={18} /> {label}{id === 'notifications' && catalogNotifications.count > 0 && <span className="catalog-nav-count">{catalogNotifications.count}</span>}
+              <Icon size={18} /> {label}{id === 'notifications' && (catalogNotifications.count + (catalogNotifications.accessCount || 0)) > 0 && <span className="catalog-nav-count">{(catalogNotifications.count + (catalogNotifications.accessCount || 0))}</span>}
             </button>
           ))}
         </nav>
@@ -655,7 +655,7 @@ function App() {
             <h1>{nav.find(([id]) => id === active)?.[1]}</h1>
           </div>
           <div className="topbar-actions">
-            <button className="catalog-alert-button" title="Notificações de anúncios do catálogo" aria-label={catalogNotifications.count ? `${catalogNotifications.count} ${catalogNotifications.count === 1 ? 'novo anúncio' : 'novos anúncios'} para revisar` : 'Notificações do catálogo'} onClick={() => { setActive('notifications'); setMobileOpen(false); loadCatalogNotifications() }}><BellRing size={18}/>{catalogNotifications.count > 0 && <span>{catalogNotifications.count}</span>}</button>
+            <button className="catalog-alert-button" title="Notificações de anúncios do catálogo" aria-label={(catalogNotifications.count + (catalogNotifications.accessCount || 0)) ? `${(catalogNotifications.count + (catalogNotifications.accessCount || 0))} ${(catalogNotifications.count + (catalogNotifications.accessCount || 0)) === 1 ? 'notificação do catálogo' : 'notificações do catálogo'}` : 'Notificações do catálogo'} onClick={() => { setActive('notifications'); setMobileOpen(false); loadCatalogNotifications() }}><BellRing size={18}/>{(catalogNotifications.count + (catalogNotifications.accessCount || 0)) > 0 && <span>{(catalogNotifications.count + (catalogNotifications.accessCount || 0))}</span>}</button>
             <button className="install-master" onClick={installApp} disabled={appInstalled}>
               <Download size={17} />
               {appInstalled ? 'Instalado' : 'Instalar app'}

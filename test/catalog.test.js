@@ -11,6 +11,7 @@ const { app } = await import('../server/index.js')
 const server = app.listen(0, '127.0.0.1'); await once(server, 'listening')
 after(() => new Promise(resolve => server.close(resolve)))
 const base = 'http://127.0.0.1:' + server.address().port
+const Access = mongoose.model('CatalogAccessRequest')
 const Entry = mongoose.model('CatalogEntry'), Club = mongoose.model('Club'), Payment = mongoose.model('MasterPayment'), Log = mongoose.model('AuditLog')
 const auth = { Cookie: 'espacoon_master=' + jwt.sign({ role: 'master' }, process.env.JWT_SECRET) }
 const input = { name: 'Clube de Teste', ownerName: 'Dono do Clube', email: 'dono@example.com', phone: '(69) 99999-0000', category: 'clube', city: 'Porto Velho', state: 'ro', description: 'Espaço com piscina e churrasqueira para festas.', amenities: ['piscina', 'quarto'], website: 'https://demo.rubli.com.br', consent: true }
@@ -38,6 +39,7 @@ test('search always restricts published entries, escapes regex and combines requ
 })
 test('free signup publishes immediately; master review clears notifications and rejection hides the entry and photos', async t => {
   let stored
+  t.mock.method(Access, 'countDocuments', async () => 0)
   t.mock.method(Entry, 'create', async value => { stored = value; return value })
   t.mock.method(Club, 'create', async () => assert.fail('No paid club should be created'))
   t.mock.method(Payment, 'create', async () => assert.fail('No payment should be created'))
@@ -73,7 +75,7 @@ test('free signup publishes immediately; master review clears notifications and 
 })
 
 test('notification queue includes old pending entries and new public ads, without notifying about already reviewed or refused entries', () => {
-  assert.deepEqual(catalogReviewFilter(), { $or: [{ status: 'pending' }, { status: 'published', reviewStatus: 'new' }] })
+  assert.deepEqual(catalogReviewFilter(), { $or: [{ status: 'pending' }, { status: { $in: ['published', 'hidden', 'rejected'] }, reviewStatus: 'new' }] })
 })
 
 test('only master can permanently delete an ad and its photos, with explicit confirmation and audit', async t => {
