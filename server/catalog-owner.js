@@ -24,7 +24,7 @@ async function passwordMatches(value, stored) {
   const expected = Buffer.from(digest, 'hex')
   return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected)
 }
-export function installCatalogOwner({ app, mongoose, Entry, requireMaster, writeLimiter, logAction, sessionSecret }) {
+export function installCatalogOwner({ app, mongoose, Entry, requireMaster, writeLimiter, logAction, sessionSecret, notifyMaster = () => {} }) {
   const Account = mongoose.model('CatalogOwner', new mongoose.Schema({ id: { type: String, unique: true }, phone: { type: String, unique: true }, passwordHash: { type: String, select: false }, version: { type: Number, default: 0 }, inviteHash: { type: String, select: false }, inviteExpiresAt: Date }, { timestamps: true }))
   const Request = mongoose.model('CatalogAccessRequest', new mongoose.Schema({ id: { type: String, unique: true }, phone: { type: String, unique: true }, status: { type: String, enum: ['pending', 'issued', 'dismissed'], default: 'pending' }, requestedAt: Date, handledAt: Date }, { timestamps: true }).index({ status: 1, requestedAt: -1 }))
   const route = fn => async (req, res, next) => { try { await fn(req, res, next) } catch (error) { next(error) } }
@@ -55,8 +55,15 @@ export function installCatalogOwner({ app, mongoose, Entry, requireMaster, write
     const exists = await Entry.exists({ phone })
     if (exists) {
       const now = new Date()
-      await Request.updateOne({ phone, status: { $ne: 'pending' }, requestedAt: { $lt: new Date(Date.now() - 10 * 60000) } }, { $set: { status: 'pending', requestedAt: now, handledAt: null } })
-      try { await Request.updateOne({ phone }, { $setOnInsert: { id: crypto.randomUUID(), phone, status: 'pending', requestedAt: now } }, { upsert: true }) } catch (error) { if (error.code !== 11000) throw error }
+      const reopened = await Request.updateOne({ phone, status: { $ne: 'pending' }, requestedAt: { $lt: new Date(Date.now() - 10 * 60000) } }, { $set: { status: 'pending', requestedAt: now, handledAt: null } })
+      let inserted
+      try { inserted = await Request.updateOne({ phone }, { $setOnInsert: { id: crypto.randomUUID(), phone, status: 'pending', requestedAt: now } }, { upsert: true }) } catch (error) { if (error.code !== 11000) throw error }
+      if (reopened.modifiedCount || inserted?.upsertedCount) notifyMaster({
+        title: 'Novo pedido de acesso ao anúncio',
+        body: 'Um anunciante solicitou acesso. Abra o Master para revisar o pedido e gerar o link.',
+        url: '/?view=notifications',
+        tag: 'catalog-access-request-' + crypto.randomUUID(),
+      })
     }
     res.json({ ok: true, message: 'Se houver anúncios com esse WhatsApp, nossa equipe receberá o pedido e enviará um link para o número cadastrado. Aguarde o atendimento.' })
   }))

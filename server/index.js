@@ -1626,7 +1626,7 @@ app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) =
   }
 })
 
-installCatalog({ app, mongoose, requireMaster, writeLimiter, logAction, sessionSecret: JWT_SECRET })
+installCatalog({ app, mongoose, requireMaster, writeLimiter, logAction, sessionSecret: JWT_SECRET, notifyMaster })
 
 const referrals = installReferrals({ app, mongoose, Club, Payment, requireMaster, writeLimiter, logAction })
 const RegistrationInvite = installRegistrationInvites({ app, mongoose, requireMaster, writeLimiter, validateClubInput, referralSnapshot: referrals.snapshot })

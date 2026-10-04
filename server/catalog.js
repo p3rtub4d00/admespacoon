@@ -79,13 +79,13 @@ export function catalogFilter(query) {
 export function catalogReviewFilter() {
   return { $or: [{ status: 'pending' }, { status: { $in: ['published', 'hidden', 'rejected'] }, reviewStatus: 'new' }] }
 }
-export function installCatalog({ app, mongoose, requireMaster, writeLimiter, logAction, sessionSecret }) {
+export function installCatalog({ app, mongoose, requireMaster, writeLimiter, logAction, sessionSecret, notifyMaster }) {
   const photoSchema = new mongoose.Schema({ data: Buffer, contentType: String }, { _id: false })
   const Entry = mongoose.model('CatalogEntry', new mongoose.Schema({
     id: { type: String, unique: true, required: true }, ownerId: { type: String, index: true }, name: String, ownerName: String, email: String, phone: String, category: String, type: String, city: String, state: String, neighborhood: String, description: String, website: String, onlineBooking: Boolean, capacity: Number, amenities: [String], photoCount: Number,
     photos: { type: [photoSchema], select: false }, status: { type: String, enum: ['pending', 'published', 'hidden', 'rejected'], default: 'published' }, reviewStatus: { type: String, enum: ['new', 'reviewed'], default: 'new' }, reviewedAt: Date, moderationNote: String, consentAt: Date, consentVersion: String, publishedAt: Date,
   }, { timestamps: true }).index({ status: 1, type: 1, createdAt: -1 }).index({ reviewStatus: 1, status: 1, createdAt: -1 }))
-  const { Request } = installCatalogOwner({ app, mongoose, Entry, requireMaster, writeLimiter, logAction, sessionSecret })
+  const { Request } = installCatalogOwner({ app, mongoose, Entry, requireMaster, writeLimiter, logAction, sessionSecret, notifyMaster })
   const readLimit = rateLimit({ windowMs: 60000, limit: 600, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Muitas consultas. Tente novamente em um minuto.' } })
   const submitLimit = rateLimit({ windowMs: 3600000, limit: 100, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Limite de cadastros atingido. Tente mais tarde.' } })
   const route = fn => async (req, res, next) => { try { await fn(req, res) } catch (error) { next(error) } }

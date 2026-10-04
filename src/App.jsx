@@ -431,7 +431,7 @@ function App() {
   const [adminAccessToken] = useState(() => new URLSearchParams(window.location.search).get('adminAccessToken') || '')
   const [sessionChecked, setSessionChecked] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
-  const [active, setActive] = useState('dashboard')
+  const [active, setActive] = useState(() => new URLSearchParams(window.location.search).get('view') === 'notifications' ? 'notifications' : 'dashboard')
   const [mobileOpen, setMobileOpen] = useState(false)
   const [catalogNotifications, setCatalogNotifications] = useState({ count: 0, entries: [] })
   const [catalogNotificationError, setCatalogNotificationError] = useState('')
@@ -958,6 +958,7 @@ function MasterNotifications({
 
         <div className="master-notification-events">
           <strong>Eventos automáticos</strong>
+          <span>Solicitação de acesso aos anúncios</span>
           <span>Pagamento de mensalidade confirmado</span>
           <span>Mensalidade vencida</span>
           <span>Suspensão automática</span>
