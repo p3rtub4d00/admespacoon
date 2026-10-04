@@ -188,3 +188,13 @@ Publique esta atualização antes de configurar o novo site. No serviço Render 
 Ponto de restauração: branch `restore/before-public-catalog-2026-10-04`. A reversão de código não apaga os dados cadastrados.
 
 O sino no topo e a seção **Notificações** mostram a quantidade e os cinco anúncios mais recentes ainda não revisados. O master aberto consulta novidades a cada 60 segundos; a revisão ou recusa atualiza o contador. A notificação leva direto ao anúncio para revisão. Cadastros pendentes da versão anterior permanecem visíveis na fila, sem publicação retroativa automática. Não há mensagens automáticas por WhatsApp nem edição pelo proprietário nesta etapa. Novo ponto de restauração: `restore/before-catalog-auto-publication-2026-10-04`.
+
+## Acesso de anunciantes ao catálogo
+
+Em Notificações, a seção Pedidos de acesso aos anúncios recebe solicitações feitas no catálogo pelo WhatsApp cadastrado. Confira os anúncios, selecione os que pertencem ao responsável e gere o link. O envio por WhatsApp é manual: o botão abre a conversa no número cadastrado com mensagem pronta. O link vale por 24 horas e só pode ser usado uma vez para definir/recuperar senha. Não há Telegram ou API de WhatsApp neste fluxo.
+
+As coleções CatalogOwner e CatalogAccessRequest ficam no banco do Master. CatalogEntry recebe ownerId apenas após liberação pela equipe. Sessões dos anunciantes são independentes da sessão Master, com papel e audiência próprios; todas as leituras/escritas e fotos privadas exigem o proprietário vinculado. Recuperar a senha revoga sessões anteriores. Alterar o WhatsApp do anúncio no Master remove o vínculo anterior; é necessário liberar o anúncio ao novo responsável.
+
+Novos pedidos e alterações de anúncios aparecem nas notificações. Edições não republicam anúncios ocultos/recusados automaticamente. O cadastro continua gratuito, separado dos clubes pagos e de suas reservas/assinaturas.
+
+Não há novas variáveis obrigatórias. O segredo JWT_SECRET existente também assina as sessões com audiência exclusiva do anunciante. Publique o Master antes do catálogo.

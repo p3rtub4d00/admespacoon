@@ -16,6 +16,9 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  catalogAccessRequests: (page = 1) => request('/api/master/catalog/access-requests?page=' + page),
+  issueCatalogAccess: (id, entryIds) => request('/api/master/catalog/access-requests/' + encodeURIComponent(id) + '/issue', { method: 'POST', body: JSON.stringify({ entryIds }) }),
+  dismissCatalogAccess: id => request('/api/master/catalog/access-requests/' + encodeURIComponent(id) + '/dismiss', { method: 'POST', body: '{}' }),
   catalogEntry: id => request('/api/master/catalog/entries/' + encodeURIComponent(id)),
   catalogNotifications: () => request('/api/master/catalog/notifications'),
   catalog: (status, page = 1) => request('/api/master/catalog?status=' + encodeURIComponent(status) + '&page=' + page),
