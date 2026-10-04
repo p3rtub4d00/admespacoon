@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 
 export const DEMO_EVENT_TYPES = ['visit', 'admin_open', 'contact_click', 'reservation_completed']
+export const LOCATION_STATUSES = ['no_public_ip','provider_timeout','provider_error','provider_rate_limit','local_limit','not_available']
 export const DEMO_RETENTION_DAYS = 90
 export function analyticsDay(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Manaus', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date)
@@ -20,7 +21,7 @@ export function demoEventRecord(clubId, input, secret, now = new Date()) {
   const bucket = input.type === 'reservation_completed' ? '' : day
   const eventKey = crypto.createHmac('sha256', secret).update([clubId, input.type, bucket, input.eventId].join('|')).digest('hex')
   const location = input.type === 'visit' ? sanitizeDemoLocation(input.location) : null
-  return { clubId, type: input.type, day, eventKey, ...(location ? { location } : {}), createdAt: now, expiresAt: new Date(now.getTime() + DEMO_RETENTION_DAYS * 86400000) }
+  return { clubId, type: input.type, day, eventKey, ...(location ? {location,locationStatus:'identified'} : input.type === 'visit' && LOCATION_STATUSES.includes(input.locationStatus) ? {locationStatus:input.locationStatus} : {}), createdAt: now, expiresAt: new Date(now.getTime() + DEMO_RETENTION_DAYS * 86400000) }
 }
 export function demoAnalyticsSummary(rows, now = new Date()) {
   const today = analyticsDay(now)
@@ -55,17 +56,23 @@ export function demoLocationSummary(rows, now = new Date()) {
   return Object.fromEntries(Object.entries(starts).map(([period,start]) => {
     const locations = new Map()
     let total = 0, unknown = 0
+    const reasons = {}
     for (const row of rows) {
       if (row._id.type !== 'visit' || row._id.day < start || row._id.day > today) continue
       const count = Number(row.count) || 0
       total += count
       const location = sanitizeDemoLocation(row._id.location)
-      if (!location) { unknown += count; continue }
+      if (!location) {
+        unknown += count
+        const reason = LOCATION_STATUSES.includes(row._id.locationStatus) ? row._id.locationStatus : 'legacy'
+        reasons[reason] = (reasons[reason] || 0) + count
+        continue
+      }
       const key = JSON.stringify(location)
       const previous = locations.get(key)
       locations.set(key, { ...location, count: (previous?.count || 0) + count })
     }
     const ranked = [...locations.values()].sort((a,b) => b.count - a.count || JSON.stringify(a).localeCompare(JSON.stringify(b)))
-    return [period, { rows: ranked.slice(0,20), total, unknown, other: ranked.slice(20).reduce((sum,row) => sum + row.count,0) }]
+    return [period, { rows: ranked.slice(0,20), total, unknown, reasons, other: ranked.slice(20).reduce((sum,row) => sum + row.count,0) }]
   }))
 }

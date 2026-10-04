@@ -123,3 +123,24 @@ test('location summaries match visits by period, keep old unknown entries and ex
   const many=Array.from({length:25},(_,i)=>({_id:{day:'2026-10-02',type:'visit',location:{...location,city:'City'+i}},count:1}))
   assert.equal(demoLocationSummary(many,new Date('2026-10-02T12:00:00Z')).today.other,5)
 })
+
+test('location failure reasons are whitelisted, grouped by period and exclude IP/error payloads',async()=>{
+  const {demoLocationSummary}=await import('../server/demo-analytics.js')
+  const now=new Date('2026-10-04T16:00:00Z')
+  const valid=demoEventRecord('CLB-1',{type:'visit',eventId:'reason-session',locationStatus:'provider_timeout',ip:'8.8.8.8',message:'private'},'secret',now)
+  assert.equal(valid.locationStatus,'provider_timeout')
+  assert.equal(valid.ip,undefined)
+  assert.equal(valid.message,undefined)
+  assert.equal(demoEventRecord('CLB-1',{type:'visit',eventId:'reason-session',locationStatus:'8.8.8.8'},'secret',now).locationStatus,undefined)
+  const rows=[
+    {_id:{day:'2026-10-04',type:'visit',locationStatus:'provider_timeout'},count:2},
+    {_id:{day:'2026-10-04',type:'visit',locationStatus:'no_public_ip'},count:1},
+    {_id:{day:'2026-10-04',type:'visit'},count:3},
+    {_id:{day:'2026-10-03',type:'visit',locationStatus:'provider_rate_limit'},count:4},
+    {_id:{day:'2026-10-04',type:'admin_open',locationStatus:'provider_error'},count:20},
+  ]
+  const report=demoLocationSummary(rows,now)
+  assert.deepEqual(report.today.reasons,{provider_timeout:2,no_public_ip:1,legacy:3})
+  assert.equal(report.last7.reasons.provider_rate_limit,4)
+  assert.equal(report.today.unknown,6)
+})
