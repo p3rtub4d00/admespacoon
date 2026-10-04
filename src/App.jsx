@@ -1,3 +1,4 @@
+import CatalogNotifications from './CatalogNotifications'
 import CatalogAdmin from './CatalogAdmin'
 import ReferralPartners from './ReferralPartners'
 import { RegistrationPage, RegistrationInvites } from './Registration'
@@ -432,6 +433,11 @@ function App() {
   const [authenticated, setAuthenticated] = useState(false)
   const [active, setActive] = useState('dashboard')
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [catalogNotifications, setCatalogNotifications] = useState({ count: 0, entries: [] })
+  const [catalogNotificationError, setCatalogNotificationError] = useState('')
+  const [catalogNotificationLoading, setCatalogNotificationLoading] = useState(false)
+  const [catalogReviewId, setCatalogReviewId] = useState(null)
+  const [catalogRefresh, setCatalogRefresh] = useState(0)
   const [dashboard, setDashboard] = useState(null)
   const [revenueMonth, setRevenueMonth] = useState(() => {
     const now = new Date()
@@ -458,6 +464,25 @@ function App() {
     window.matchMedia?.('(display-mode: standalone)').matches ||
     window.navigator.standalone === true
   )
+
+  const loadCatalogNotifications = async () => {
+    setCatalogNotificationLoading(true)
+    try { const data = await api.catalogNotifications(); setCatalogNotifications(data); setCatalogNotificationError('') }
+    catch (error) { setCatalogNotificationError(error.message) }
+    finally { setCatalogNotificationLoading(false) }
+  }
+  const reviewCatalog = (id = null) => { setCatalogReviewId(id); setCatalogRefresh(value => value + 1); setActive('catalog'); setMobileOpen(false) }
+  useEffect(() => {
+    if (!authenticated) { setCatalogNotifications({ count: 0, entries: [] }); return }
+    let alive = true
+    const refresh = async () => {
+      try { const data = await api.catalogNotifications(); if (alive) { setCatalogNotifications(data); setCatalogNotificationError('') } }
+      catch (error) { if (alive) setCatalogNotificationError(error.message) }
+    }
+    refresh()
+    const timer = setInterval(refresh, 60000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [authenticated])
 
   const loadAll = async () => {
     setLoading(true)
@@ -602,9 +627,10 @@ function App() {
           {nav.map(([id, label, Icon]) => (
             <button key={id} className={active === id ? 'active' : ''} onClick={() => {
               setActive(id)
+              if (id === 'catalog') setCatalogReviewId(null)
               setMobileOpen(false)
             }}>
-              <Icon size={18} /> {label}
+              <Icon size={18} /> {label}{id === 'notifications' && catalogNotifications.count > 0 && <span className="catalog-nav-count">{catalogNotifications.count}</span>}
             </button>
           ))}
         </nav>
@@ -629,11 +655,12 @@ function App() {
             <h1>{nav.find(([id]) => id === active)?.[1]}</h1>
           </div>
           <div className="topbar-actions">
+            <button className="catalog-alert-button" title="Notificações de anúncios do catálogo" aria-label={catalogNotifications.count ? `${catalogNotifications.count} ${catalogNotifications.count === 1 ? 'novo anúncio' : 'novos anúncios'} para revisar` : 'Notificações do catálogo'} onClick={() => { setActive('notifications'); setMobileOpen(false); loadCatalogNotifications() }}><BellRing size={18}/>{catalogNotifications.count > 0 && <span>{catalogNotifications.count}</span>}</button>
             <button className="install-master" onClick={installApp} disabled={appInstalled}>
               <Download size={17} />
               {appInstalled ? 'Instalado' : 'Instalar app'}
             </button>
-            <button className="refresh" onClick={loadAll} disabled={loading}><RefreshCcw size={17} /> Atualizar</button>
+            <button className="refresh" onClick={() => { loadAll(); loadCatalogNotifications(); setCatalogReviewId(null); setCatalogRefresh(value => value + 1) }} disabled={loading}><RefreshCcw size={17} /> Atualizar</button>
           </div>
         </header>
 
@@ -673,7 +700,7 @@ function App() {
         )}
 
         {active === 'referrals' && <ReferralPartners />}
-        {active === 'catalog' && <CatalogAdmin />}
+        {active === 'catalog' && <CatalogAdmin onChanged={() => { setCatalogReviewId(null); return loadCatalogNotifications() }} requestedId={catalogReviewId} refreshToken={catalogRefresh} />}
 
         {active === 'billing' && (
           <section className="content-card">
@@ -763,6 +790,7 @@ function App() {
           </>
         )}
 
+        {active === 'notifications' && <CatalogNotifications data={catalogNotifications} error={catalogNotificationError} loading={catalogNotificationLoading} refresh={loadCatalogNotifications} review={reviewCatalog} />}
         {active === 'notifications' && (
           <MasterNotifications
             pushStatus={pushStatus}

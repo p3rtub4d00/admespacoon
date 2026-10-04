@@ -3,7 +3,7 @@ import { after, test } from 'node:test'
 import { once } from 'node:events'
 import mongoose from 'mongoose'
 import jwt from 'jsonwebtoken'
-import { validateCatalog, validatePhotos, publicCatalog, catalogFilter } from '../server/catalog.js'
+import { validateCatalog, validatePhotos, publicCatalog, catalogFilter, catalogReviewFilter } from '../server/catalog.js'
 process.env.JWT_SECRET = 'catalog-test-secret-with-at-least-32-characters'
 process.env.MASTER_PASSWORD = 'catalog-test-password'
 delete process.env.MONGODB_URI
@@ -36,25 +36,42 @@ test('search always restricts published entries, escapes regex and combines requ
   for (const key of ['ownerName', 'email', 'status', 'moderationNote', 'consentAt']) assert.equal(visible[key], undefined)
   assert.deepEqual(visible.photos, ['/api/catalog/photos/id/0', '/api/catalog/photos/id/1'])
 })
-test('free signup creates a pending entry only; public reads and photos hide it until master approval', async t => {
+test('free signup publishes immediately; master review clears notifications and rejection hides the entry and photos', async t => {
   let stored
   t.mock.method(Entry, 'create', async value => { stored = value; return value })
   t.mock.method(Club, 'create', async () => assert.fail('No paid club should be created'))
   t.mock.method(Payment, 'create', async () => assert.fail('No payment should be created'))
   t.mock.method(Log, 'create', async () => ({}))
-  const result = await req('/api/catalog/submissions', { ...input, photos: [photo], status: 'published' }, {}, 'POST')
-  assert.equal(result.status, 201); assert.equal(stored.status, 'pending'); assert.ok(stored.consentAt instanceof Date); assert.equal(stored.photoCount, 1)
+  const result = await req('/api/catalog/submissions', { ...input, photos: [photo], status: 'rejected', reviewStatus: 'reviewed' }, {}, 'POST')
+  assert.equal(result.status, 201); assert.equal(stored.status, 'published'); assert.equal(stored.reviewStatus, 'new'); assert.ok(stored.publishedAt instanceof Date); assert.ok(stored.consentAt instanceof Date); assert.equal(stored.photoCount, 1)
   assert.equal((await result.json()).id, undefined)
   assert.equal((await req('/api/master/catalog')).status, 401)
   assert.equal((await req('/api/master/catalog/' + stored.id, input, {}, 'PUT')).status, 401)
   t.mock.method(Entry, 'findOne', filter => ({ select() { return this }, async lean() { return filter.status && stored.status !== filter.status ? null : stored } }))
-  assert.equal((await req('/api/catalog/entries/' + stored.id)).status, 404)
-  assert.equal((await req('/api/catalog/photos/' + stored.id + '/0')).status, 404)
+  assert.equal((await req('/api/catalog/entries/' + stored.id)).status, 200)
+  assert.equal((await req('/api/catalog/photos/' + stored.id + '/0')).status, 200)
+  const needsReview = () => stored.status === 'published' && stored.reviewStatus === 'new'
+  t.mock.method(Entry, 'countDocuments', async filter => { assert.deepEqual(filter, catalogReviewFilter()); return needsReview() ? 1 : 0 })
+  t.mock.method(Entry, 'find', filter => { assert.deepEqual(filter, catalogReviewFilter()); return { sort() { return this }, limit() { return this }, lean: async () => needsReview() ? [stored] : [] } })
+  assert.equal((await req('/api/master/catalog/notifications')).status, 401)
+  assert.equal((await req('/api/master/catalog/entries/' + stored.id)).status, 401)
+  const notification = await req('/api/master/catalog/notifications', null, auth)
+  const inbox = await notification.json(); assert.equal(inbox.count, 1); assert.equal(inbox.entries[0].email, undefined); assert.equal(inbox.entries[0].ownerName, undefined)
   const privatePhoto = await req('/api/master/catalog/photos/' + stored.id + '/0', null, auth); assert.equal(privatePhoto.status, 200); assert.equal(Buffer.from(await privatePhoto.arrayBuffer()).equals(bytes), true)
   t.mock.method(Entry, 'findOneAndUpdate', (_filter, update) => ({ lean: async () => { stored = { ...stored, ...update.$set }; return stored } }))
   assert.equal((await req('/api/master/catalog/' + stored.id, { ...input, status: 'published' }, auth, 'PUT')).status, 200)
+  assert.equal(stored.reviewStatus, 'reviewed'); assert.ok(stored.reviewedAt instanceof Date)
+  assert.equal((await (await req('/api/master/catalog/notifications', null, auth)).json()).count, 0)
   const detail = await req('/api/catalog/entries/' + stored.id); assert.equal(detail.status, 200); assert.equal((await detail.json()).email, undefined)
   assert.equal((await req('/api/catalog/photos/' + stored.id + '/0')).status, 200)
-  assert.equal((await req('/api/master/catalog/' + stored.id, { ...input, status: 'hidden' }, auth, 'PUT')).status, 200)
+  assert.equal((await req('/api/master/catalog/' + stored.id, { ...input, status: 'rejected' }, auth, 'PUT')).status, 400)
+  assert.equal(stored.status, 'published')
+  assert.equal((await req('/api/master/catalog/' + stored.id, { ...input, status: 'rejected', moderationNote: 'Informações inconsistentes.' }, auth, 'PUT')).status, 200)
+  assert.equal(stored.status, 'rejected'); assert.equal(stored.moderationNote, 'Informações inconsistentes.')
+  assert.equal((await (await req('/api/master/catalog/notifications', null, auth)).json()).count, 0)
   assert.equal((await req('/api/catalog/entries/' + stored.id)).status, 404); assert.equal((await req('/api/catalog/photos/' + stored.id + '/0')).status, 404)
+})
+
+test('notification queue includes old pending entries and new public ads, without notifying about already reviewed or refused entries', () => {
+  assert.deepEqual(catalogReviewFilter(), { $or: [{ status: 'pending' }, { status: 'published', reviewStatus: 'new' }] })
 })
