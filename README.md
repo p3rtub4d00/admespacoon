@@ -176,3 +176,13 @@ Ponto adicional anterior à comissão recorrente: `restore/before-recurring-refe
 ### Diagnóstico das visitas sem localização
 
 As visitas novas do demo podem incluir `locationStatus`, restrito a códigos fixos de resultado da consulta. O relatório agrega os motivos por período e exibe timeout, quota, indisponibilidade, IP público ausente ou dados não disponíveis. Visitas anteriores sem esse campo aparecem como antigas/sem diagnóstico; não há recuperação retroativa de localização, porque o IP não foi armazenado. Não são aceitos IPs nem mensagens brutas de erro nesse campo. Publicar também a correção de coleta no serviço do demo.
+
+## Catálogo público ClubeOn
+
+A seção **Catálogo** administra gratuitamente espaços e fornecedores enviados pelo site `clubeon`. Cadastros novos ficam pendentes e exigem revisão: edite informações, confira fotos e selecione **Publicados** para publicar; **Ocultos** retira o anúncio e suas fotos do acesso público. Nome do responsável, e-mail e observações ficam restritos ao master. Não há criação de licença, assinatura, pagamento ou comissão ao enviar um cadastro de catálogo.
+
+O catálogo usa a coleção `CatalogEntry`, separada dos clientes pagantes, no banco existente do master. As fotos são JPEG reduzidos de até 100 KB cada, no máximo seis por anúncio; aproximadamente 600 KB de fotos por cadastro completo, mais seus textos e metadados. O backup existente inclui a nova coleção automaticamente. Cadastros não são apagados automaticamente.
+
+Publique esta atualização antes de configurar o novo site. No serviço Render do repositório `clubeon`, configure `MASTER_API_URL` com a origem HTTPS deste master (sem caminho, senha ou `/api`). Nenhuma variável adicional é necessária neste master. Os endpoints públicos `/api/catalog` devolvem somente anúncios publicados; as rotas `/api/master/catalog` exigem a sessão administrativa existente.
+
+Ponto de restauração: branch `restore/before-public-catalog-2026-10-04`. A reversão de código não apaga os dados cadastrados.

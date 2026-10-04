@@ -1,3 +1,4 @@
+import { installCatalog } from './catalog.js'
 import { installReferrals, isReferralMonthlyPayment, referralPercentage } from './referrals.js'
 import { installRegistrationInvites } from './registration-invites.js'
 import { demoEventRecord, demoAnalyticsSummary, demoLocationSummary, analyticsDay, daysBefore } from './demo-analytics.js'
@@ -1624,6 +1625,8 @@ app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) =
     next(error)
   }
 })
+
+installCatalog({ app, mongoose, requireMaster, writeLimiter, logAction })
 
 const referrals = installReferrals({ app, mongoose, Club, Payment, requireMaster, writeLimiter, logAction })
 const RegistrationInvite = installRegistrationInvites({ app, mongoose, requireMaster, writeLimiter, validateClubInput, referralSnapshot: referrals.snapshot })

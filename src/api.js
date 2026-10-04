@@ -16,6 +16,9 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  catalog: (status, page = 1) => request('/api/master/catalog?status=' + encodeURIComponent(status) + '&page=' + page),
+  catalogMeta: () => request('/api/master/catalog/meta'),
+  saveCatalog: (id, payload) => request('/api/master/catalog/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(payload) }),
   privacySettings: () => request('/api/master/privacy'),
   savePrivacySettings: payload => request('/api/master/privacy', { method: 'PUT', body: JSON.stringify(payload) }),
   session: () => request('/api/master/session'),
