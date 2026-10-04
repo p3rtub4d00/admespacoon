@@ -22,7 +22,7 @@ test('request is generic, deduplicated, goes only to registered phone, and maste
   t.mock.method(Entry, 'exists', async filter => filter.phone === listing.phone)
   t.mock.method(Access, 'updateOne', async (filter, update) => { if (update.$setOnInsert && !pending) pending = { ...update.$setOnInsert }; return {} })
   t.mock.method(Access, 'findOne', filter => chain(pending && filter.id === pending.id && pending.status === 'pending' ? pending : null))
-  t.mock.method(Access, 'findOneAndUpdate', (_filter, update) => { if (!pending || pending.status !== 'pending') return chain(null); pending = { ...pending, ...update.$set }; return chain(pending) })
+  t.mock.method(Access, 'findOneAndUpdate', (_filter, update) => { if (_filter.phone) return chain(null); if (!pending || pending.status !== 'pending') return chain(null); pending = { ...pending, ...update.$set }; return chain(pending) })
   t.mock.method(Account, 'findOneAndUpdate', (_filter, update) => { account ||= { ...update.$setOnInsert }; return chain(account) })
   t.mock.method(Account, 'updateOne', async (_filter, update) => { Object.assign(account, update.$set); return {} })
   t.mock.method(Entry, 'find', filter => chain(filter.phone === listing.phone && filter.id.$in.includes(stored.id) ? [stored] : []))
@@ -76,7 +76,7 @@ test('owner cannot read, edit or delete another owner ad; photo edits preserve m
   assert.equal((await req('/api/catalog/owner/entries/' + stored.id, { confirmation: stored.id }, session, 'DELETE')).status, 200); assert.equal(stored, null)
 })
 
-test('access requests push to enabled Master devices once, reopen with a new alert, and survive delivery failures', async t => {
+test('access requests push for new and older pending requests, atomically throttle repeats, and survive delivery failures', async t => {
   const webpush = (await import('web-push')).default
   const keys = webpush.generateVAPIDKeys()
   const PushConfig = mongoose.model('MasterPushConfig'), PushSubscription = mongoose.model('MasterPushSubscription')
@@ -92,6 +92,13 @@ test('access requests push to enabled Master devices once, reopen with a new ale
       Object.assign(pending, update.$set); return { modifiedCount: 1 }
     }
     return { modifiedCount: 0 }
+  })
+  t.mock.method(Access, 'findOneAndUpdate', (filter, update) => {
+    assert.equal(filter.phone, phone); assert.equal(filter.status, 'pending')
+    const cutoff = filter.$or[2].pushRequestedAt.$lte
+    if (!pending || pending.status !== 'pending' || (pending.pushRequestedAt && pending.pushRequestedAt > cutoff)) return chain(null)
+    Object.assign(pending, update.$set)
+    return chain({ ...pending })
   })
   t.mock.method(PushConfig, 'findOne', () => chain(keys))
   t.mock.method(PushSubscription, 'find', query => {
@@ -121,6 +128,7 @@ test('access requests push to enabled Master devices once, reopen with a new ale
   assert.equal(alerts.length, 1)
   assert.deepEqual(await submit('69999990004'), generic)
   assert.equal(alerts.length, 1)
+  pending.pushRequestedAt = new Date(Date.now() - 61000)
   pending.status = 'issued'; pending.requestedAt = new Date(Date.now() - 11 * 60000)
   await submit(phone)
   assert.equal(alerts.length, 2); assert.equal(pending.status, 'pending')
@@ -128,8 +136,15 @@ test('access requests push to enabled Master devices once, reopen with a new ale
   pending.status = 'dismissed'; pending.requestedAt = new Date()
   await submit(phone)
   assert.equal(alerts.length, 2); assert.equal(pending.status, 'dismissed')
-  failPush = true; pending.requestedAt = new Date(Date.now() - 11 * 60000)
+  failPush = true; pending.pushRequestedAt = new Date(Date.now() - 61000); pending.requestedAt = new Date(Date.now() - 11 * 60000)
   await submit(phone)
   assert.equal(alerts.length, 3); assert.equal(pending.status, 'pending')
   assert.ok(warnings.length > 0); assert.ok(updates.at(-1).$set.lastErrorAt)
+  failPush = false; delete pending.pushRequestedAt
+  await submit(phone)
+  assert.equal(alerts.length, 4) // Legacy pending request, saved before push existed.
+  pending.pushRequestedAt = new Date(Date.now() - 61000)
+  await Promise.all([submit(phone), submit(phone)])
+  assert.equal(alerts.length, 5) // Only one alert for simultaneous retries after cooldown.
+  assert.equal(pending.status, 'pending')
 })
