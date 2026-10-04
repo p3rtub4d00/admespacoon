@@ -26,7 +26,7 @@ async function passwordMatches(value, stored) {
 }
 export function installCatalogOwner({ app, mongoose, Entry, requireMaster, writeLimiter, logAction, sessionSecret, notifyMaster = () => {} }) {
   const Account = mongoose.model('CatalogOwner', new mongoose.Schema({ id: { type: String, unique: true }, phone: { type: String, unique: true }, passwordHash: { type: String, select: false }, version: { type: Number, default: 0 }, inviteHash: { type: String, select: false }, inviteExpiresAt: Date }, { timestamps: true }))
-  const Request = mongoose.model('CatalogAccessRequest', new mongoose.Schema({ id: { type: String, unique: true }, phone: { type: String, unique: true }, status: { type: String, enum: ['pending', 'issued', 'dismissed'], default: 'pending' }, requestedAt: Date, handledAt: Date }, { timestamps: true }).index({ status: 1, requestedAt: -1 }))
+  const Request = mongoose.model('CatalogAccessRequest', new mongoose.Schema({ id: { type: String, unique: true }, phone: { type: String, unique: true }, status: { type: String, enum: ['pending', 'issued', 'dismissed'], default: 'pending' }, requestedAt: Date, handledAt: Date, pushRequestedAt: Date }, { timestamps: true }).index({ status: 1, requestedAt: -1 }))
   const route = fn => async (req, res, next) => { try { await fn(req, res, next) } catch (error) { next(error) } }
   const limit = rateLimit({ windowMs: 15 * 60000, limit: 2000, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Muitas tentativas. Tente novamente em 15 minutos.' } })
   // Additional per-phone throttle protects a single account across changing client IPs.
@@ -55,10 +55,10 @@ export function installCatalogOwner({ app, mongoose, Entry, requireMaster, write
     const exists = await Entry.exists({ phone })
     if (exists) {
       const now = new Date()
-      const reopened = await Request.updateOne({ phone, status: { $ne: 'pending' }, requestedAt: { $lt: new Date(Date.now() - 10 * 60000) } }, { $set: { status: 'pending', requestedAt: now, handledAt: null } })
-      let inserted
-      try { inserted = await Request.updateOne({ phone }, { $setOnInsert: { id: crypto.randomUUID(), phone, status: 'pending', requestedAt: now } }, { upsert: true }) } catch (error) { if (error.code !== 11000) throw error }
-      if (reopened.modifiedCount || inserted?.upsertedCount) notifyMaster({
+      await Request.updateOne({ phone, status: { $ne: 'pending' }, requestedAt: { $lt: new Date(Date.now() - 10 * 60000) } }, { $set: { status: 'pending', requestedAt: now, handledAt: null } })
+      try { await Request.updateOne({ phone }, { $setOnInsert: { id: crypto.randomUUID(), phone, status: 'pending', requestedAt: now } }, { upsert: true }) } catch (error) { if (error.code !== 11000) throw error }
+      const alert = await Request.findOneAndUpdate({ phone, status: 'pending', $or: [{ pushRequestedAt: { $exists: false } }, { pushRequestedAt: null }, { pushRequestedAt: { $lte: new Date(now.getTime() - 60000) } }] }, { $set: { pushRequestedAt: now } }, { new: true }).lean()
+      if (alert) notifyMaster({
         title: 'Novo pedido de acesso ao anúncio',
         body: 'Um anunciante solicitou acesso. Abra o Master para revisar o pedido e gerar o link.',
         url: '/?view=notifications',

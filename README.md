@@ -207,6 +207,6 @@ Atualize o Master antes do catálogo. Não há novas variáveis de ambiente ou m
 
 ### Push para pedidos de acesso ao catálogo
 
-Um novo pedido de acesso de um anunciante cadastrado dispara o Web Push existente do Master para os dispositivos habilitados. Pedidos já pendentes não geram novos alertas; uma solicitação atendida ou arquivada pode ser reaberta após o intervalo existente de 10 minutos e gera um novo alerta. O payload não contém telefone, senha ou link de ativação. Ao tocar no alerta, o Master abre a área de notificações (após login, se necessário). Uma falha de entrega não impede salvar o pedido.
+Um novo pedido de acesso de um anunciante cadastrado dispara o Web Push existente do Master para os dispositivos habilitados. Uma nova tentativa também alerta quando o pedido já está pendente, incluindo pedidos antigos salvos antes da integração do push. Um limite atômico de um alerta por minuto e por pedido evita duplicação por cliques rápidos ou tentativas simultâneas. Uma solicitação atendida ou arquivada pode ser reaberta após o intervalo existente de 10 minutos. O payload não contém telefone, senha ou link de ativação. Ao tocar no alerta, o Master abre a área de notificações (após login, se necessário). Uma falha de entrega não impede salvar o pedido.
 
 Não há novas variáveis de ambiente. As notificações precisam estar habilitadas no dispositivo; o recebimento físico deve ser conferido no PWA após atualizar o serviço Master.
