@@ -204,3 +204,9 @@ Não há novas variáveis obrigatórias. O segredo JWT_SECRET existente também 
 A opção de reservas online exige um site HTTPS e direciona os visitantes apenas ao botão de reservas. O WhatsApp continua obrigatório como contato privado para liberar o acesso do responsável; não é retornado pelas APIs públicas desses anúncios. A área do dono e o Master continuam recebendo o telefone. Fornecedores e espaços sem agendamento mantêm o WhatsApp público. Anúncios antigos de espaços que já têm site usam reservas online por padrão; o responsável ou o Master pode desativar a opção se o link for apenas institucional.
 
 Atualize o Master antes do catálogo. Não há novas variáveis de ambiente ou migração obrigatória.
+
+### Push para pedidos de acesso ao catálogo
+
+Um novo pedido de acesso de um anunciante cadastrado dispara o Web Push existente do Master para os dispositivos habilitados. Pedidos já pendentes não geram novos alertas; uma solicitação atendida ou arquivada pode ser reaberta após o intervalo existente de 10 minutos e gera um novo alerta. O payload não contém telefone, senha ou link de ativação. Ao tocar no alerta, o Master abre a área de notificações (após login, se necessário). Uma falha de entrega não impede salvar o pedido.
+
+Não há novas variáveis de ambiente. As notificações precisam estar habilitadas no dispositivo; o recebimento físico deve ser conferido no PWA após atualizar o serviço Master.

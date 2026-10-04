@@ -75,3 +75,61 @@ test('owner cannot read, edit or delete another owner ad; photo edits preserve m
   assert.equal((await req('/api/catalog/owner/entries/' + stored.id, { confirmation: 'wrong' }, session, 'DELETE')).status, 400)
   assert.equal((await req('/api/catalog/owner/entries/' + stored.id, { confirmation: stored.id }, session, 'DELETE')).status, 200); assert.equal(stored, null)
 })
+
+test('access requests push to enabled Master devices once, reopen with a new alert, and survive delivery failures', async t => {
+  const webpush = (await import('web-push')).default
+  const keys = webpush.generateVAPIDKeys()
+  const PushConfig = mongoose.model('MasterPushConfig'), PushSubscription = mongoose.model('MasterPushSubscription')
+  const phone = '69999990003', alerts = [], updates = [], warnings = []
+  let pending, failPush = false
+  t.mock.method(Entry, 'exists', async filter => filter.phone === phone)
+  t.mock.method(Access, 'updateOne', async (filter, update) => {
+    if (update.$setOnInsert) {
+      if (pending) return { upsertedCount: 0 }
+      pending = { ...update.$setOnInsert }; return { upsertedCount: 1 }
+    }
+    if (pending && pending.status !== 'pending' && pending.requestedAt < filter.requestedAt.$lt) {
+      Object.assign(pending, update.$set); return { modifiedCount: 1 }
+    }
+    return { modifiedCount: 0 }
+  })
+  t.mock.method(PushConfig, 'findOne', () => chain(keys))
+  t.mock.method(PushSubscription, 'find', query => {
+    assert.deepEqual(query, { enabled: true })
+    return chain([{ endpoint: 'https://push.example.com/device', keys: { p256dh: 'key', auth: 'auth' } }])
+  })
+  t.mock.method(PushSubscription, 'updateOne', async (_filter, update) => { updates.push(update); return {} })
+  t.mock.method(webpush, 'sendNotification', async (subscription, serialized) => {
+    assert.equal(subscription.endpoint, 'https://push.example.com/device')
+    alerts.push(JSON.parse(serialized))
+    if (failPush) throw Object.assign(new Error('Temporary delivery failure'), { statusCode: 503 })
+  })
+  t.mock.method(console, 'warn', (...args) => warnings.push(args))
+  const submit = async value => {
+    const response = await req('/api/catalog/owner/access-request', { phone: value }, {}, 'POST')
+    assert.equal(response.status, 200)
+    await new Promise(resolve => setTimeout(resolve, 10))
+    return response.json()
+  }
+  const generic = await submit(phone)
+  assert.equal(alerts.length, 1)
+  assert.equal(alerts[0].url, '/?view=notifications')
+  assert.match(alerts[0].title, /pedido de acesso/)
+  assert.ok(!JSON.stringify(alerts).includes(phone))
+  assert.equal(updates.length, 1)
+  await Promise.all([submit(phone), submit(phone)])
+  assert.equal(alerts.length, 1)
+  assert.deepEqual(await submit('69999990004'), generic)
+  assert.equal(alerts.length, 1)
+  pending.status = 'issued'; pending.requestedAt = new Date(Date.now() - 11 * 60000)
+  await submit(phone)
+  assert.equal(alerts.length, 2); assert.equal(pending.status, 'pending')
+  assert.notEqual(alerts[0].tag, alerts[1].tag)
+  pending.status = 'dismissed'; pending.requestedAt = new Date()
+  await submit(phone)
+  assert.equal(alerts.length, 2); assert.equal(pending.status, 'dismissed')
+  failPush = true; pending.requestedAt = new Date(Date.now() - 11 * 60000)
+  await submit(phone)
+  assert.equal(alerts.length, 3); assert.equal(pending.status, 'pending')
+  assert.ok(warnings.length > 0); assert.ok(updates.at(-1).$set.lastErrorAt)
+})
