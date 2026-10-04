@@ -179,10 +179,12 @@ As visitas novas do demo podem incluir `locationStatus`, restrito a códigos fix
 
 ## Catálogo público ClubeOn
 
-A seção **Catálogo** administra gratuitamente espaços e fornecedores enviados pelo site `clubeon`. Cadastros novos ficam pendentes e exigem revisão: edite informações, confira fotos e selecione **Publicados** para publicar; **Ocultos** retira o anúncio e suas fotos do acesso público. Nome do responsável, e-mail e observações ficam restritos ao master. Não há criação de licença, assinatura, pagamento ou comissão ao enviar um cadastro de catálogo.
+A seção **Catálogo** administra gratuitamente espaços e fornecedores enviados pelo site `clubeon`. Cadastros novos já aparecem no site e geram uma notificação de revisão. Confira informações e fotos, depois marque como revisado ou recuse com um motivo para retirar do site; **Ocultos** retira o anúncio e suas fotos do acesso público. Nome do responsável, e-mail e observações ficam restritos ao master. Não há criação de licença, assinatura, pagamento ou comissão ao enviar um cadastro de catálogo.
 
 O catálogo usa a coleção `CatalogEntry`, separada dos clientes pagantes, no banco existente do master. As fotos são JPEG reduzidos de até 100 KB cada, no máximo seis por anúncio; aproximadamente 600 KB de fotos por cadastro completo, mais seus textos e metadados. O backup existente inclui a nova coleção automaticamente. Cadastros não são apagados automaticamente.
 
 Publique esta atualização antes de configurar o novo site. No serviço Render do repositório `clubeon`, configure `MASTER_API_URL` com a origem HTTPS deste master (sem caminho, senha ou `/api`). Nenhuma variável adicional é necessária neste master. Os endpoints públicos `/api/catalog` devolvem somente anúncios publicados; as rotas `/api/master/catalog` exigem a sessão administrativa existente.
 
 Ponto de restauração: branch `restore/before-public-catalog-2026-10-04`. A reversão de código não apaga os dados cadastrados.
+
+O sino no topo e a seção **Notificações** mostram a quantidade e os cinco anúncios mais recentes ainda não revisados. O master aberto consulta novidades a cada 60 segundos; a revisão ou recusa atualiza o contador. A notificação leva direto ao anúncio para revisão. Cadastros pendentes da versão anterior permanecem visíveis na fila, sem publicação retroativa automática. Não há mensagens automáticas por WhatsApp nem edição pelo proprietário nesta etapa. Novo ponto de restauração: `restore/before-catalog-auto-publication-2026-10-04`.

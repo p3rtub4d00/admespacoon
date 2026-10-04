@@ -71,12 +71,15 @@ export function catalogFilter(query) {
   }
   return filter
 }
+export function catalogReviewFilter() {
+  return { $or: [{ status: 'pending' }, { status: 'published', reviewStatus: 'new' }] }
+}
 export function installCatalog({ app, mongoose, requireMaster, writeLimiter, logAction }) {
   const photoSchema = new mongoose.Schema({ data: Buffer, contentType: String }, { _id: false })
   const Entry = mongoose.model('CatalogEntry', new mongoose.Schema({
     id: { type: String, unique: true, required: true }, name: String, ownerName: String, email: String, phone: String, category: String, type: String, city: String, state: String, neighborhood: String, description: String, website: String, capacity: Number, amenities: [String], photoCount: Number,
-    photos: { type: [photoSchema], select: false }, status: { type: String, enum: ['pending', 'published', 'hidden', 'rejected'], default: 'pending' }, moderationNote: String, consentAt: Date, consentVersion: String, publishedAt: Date,
-  }, { timestamps: true }).index({ status: 1, type: 1, createdAt: -1 }))
+    photos: { type: [photoSchema], select: false }, status: { type: String, enum: ['pending', 'published', 'hidden', 'rejected'], default: 'published' }, reviewStatus: { type: String, enum: ['new', 'reviewed'], default: 'new' }, reviewedAt: Date, moderationNote: String, consentAt: Date, consentVersion: String, publishedAt: Date,
+  }, { timestamps: true }).index({ status: 1, type: 1, createdAt: -1 }).index({ reviewStatus: 1, status: 1, createdAt: -1 }))
   const readLimit = rateLimit({ windowMs: 60000, limit: 600, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Muitas consultas. Tente novamente em um minuto.' } })
   const submitLimit = rateLimit({ windowMs: 3600000, limit: 100, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Limite de cadastros atingido. Tente mais tarde.' } })
   const route = fn => async (req, res, next) => { try { await fn(req, res) } catch (error) { next(error) } }
@@ -106,24 +109,35 @@ export function installCatalog({ app, mongoose, requireMaster, writeLimiter, log
   app.post('/api/catalog/submissions', submitLimit, route(async (req, res) => {
     const fields = validateCatalog(req.body, { submission: true })
     const photos = validatePhotos(req.body.photos)
-    await Entry.create({ ...fields, id: crypto.randomUUID(), photos, photoCount: photos.length, status: 'pending', consentAt: new Date(), consentVersion: 'catalog-2026-10-04' })
-    res.status(201).json({ ok: true, message: 'Recebemos seu cadastro! Ele será publicado após análise da equipe ClubeOn.' })
+    await Entry.create({ ...fields, id: crypto.randomUUID(), photos, photoCount: photos.length, status: 'published', reviewStatus: 'new', publishedAt: new Date(), consentAt: new Date(), consentVersion: 'catalog-2026-10-04' })
+    res.status(201).json({ ok: true, message: 'Seu anúncio já está publicado no catálogo! Nossa equipe poderá revisá-lo e solicitar ajustes ou retirá-lo se houver inconsistências.' })
+  }))
+  app.get('/api/master/catalog/notifications', requireMaster, route(async (_req, res) => {
+    const filter = catalogReviewFilter()
+    const [count, rows] = await Promise.all([Entry.countDocuments(filter), Entry.find(filter).sort({ createdAt: -1, id: 1 }).limit(5).lean()])
+    res.json({ count, entries: rows.map(row => ({ id: row.id, name: row.name, type: row.type, city: row.city, state: row.state, status: row.status, createdAt: row.createdAt })) })
   }))
   app.get('/api/master/catalog/meta', requireMaster, (_req, res) => res.json({ categories, amenities }))
   app.get('/api/master/catalog', requireMaster, route(async (req, res) => {
-    const status = req.query.status || 'pending'
-    if (!['pending', 'published', 'hidden', 'rejected'].includes(status)) fail('Status inválido.')
+    const status = req.query.status || 'review'
+    if (!['review', 'pending', 'published', 'hidden', 'rejected'].includes(status)) fail('Status inválido.')
     const page = Number(req.query.page || 1)
     if (!Number.isInteger(page) || page < 1 || page > 1000) fail('Página inválida.')
-    const rows = await Entry.find({ status }).sort({ createdAt: -1, id: 1 }).skip((page - 1) * 30).limit(31).lean()
-    res.json({ entries: rows.slice(0, 30).map(row => ({ ...publicCatalog(row), ownerName: row.ownerName, email: row.email, status: row.status, moderationNote: row.moderationNote || '', createdAt: row.createdAt, consentAt: row.consentAt, photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/master/catalog/photos/${row.id}/${n}`) })), hasMore: rows.length > 30 })
+    const rows = await Entry.find(status === 'review' ? catalogReviewFilter() : { status }).sort({ createdAt: -1, id: 1 }).skip((page - 1) * 30).limit(31).lean()
+    res.json({ entries: rows.slice(0, 30).map(row => ({ ...publicCatalog(row), ownerName: row.ownerName, email: row.email, status: row.status, reviewStatus: row.reviewStatus || (row.status === 'pending' ? 'new' : 'reviewed'), moderationNote: row.moderationNote || '', createdAt: row.createdAt, consentAt: row.consentAt, photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/master/catalog/photos/${row.id}/${n}`) })), hasMore: rows.length > 30 })
+  }))
+  app.get('/api/master/catalog/entries/:id', requireMaster, route(async (req, res) => {
+    const row = await Entry.findOne({ id: req.params.id }).lean()
+    if (!row) return res.status(404).json({ error: 'Cadastro não encontrado.' })
+    res.json({ ...publicCatalog(row), ownerName: row.ownerName, email: row.email, status: row.status, reviewStatus: row.reviewStatus || (row.status === 'pending' ? 'new' : 'reviewed'), moderationNote: row.moderationNote || '', consentAt: row.consentAt, photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/master/catalog/photos/${row.id}/${n}`) })
   }))
   app.get('/api/master/catalog/photos/:id/:index', requireMaster, route((req, res) => photo(req, res, true)))
   app.put('/api/master/catalog/:id', requireMaster, writeLimiter, route(async (req, res) => {
     const fields = validateCatalog(req.body)
     if (!['pending', 'published', 'hidden', 'rejected'].includes(req.body.status)) fail('Status inválido.')
     const moderationNote = field(req.body.moderationNote || '', 1000, 'observação interna')
-    const row = await Entry.findOneAndUpdate({ id: req.params.id }, { $set: { ...fields, status: req.body.status, moderationNote, ...(req.body.status === 'published' ? { publishedAt: new Date() } : {}) } }, { new: true, runValidators: true }).lean()
+    if (req.body.status === 'rejected' && !moderationNote) fail('Informe o motivo da recusa.')
+    const row = await Entry.findOneAndUpdate({ id: req.params.id }, { $set: { ...fields, status: req.body.status, reviewStatus: req.body.status === 'pending' ? 'new' : 'reviewed', reviewedAt: req.body.status === 'pending' ? null : new Date(), moderationNote, ...(req.body.status === 'published' ? { publishedAt: new Date() } : {}) } }, { new: true, runValidators: true }).lean()
     if (!row) return res.status(404).json({ error: 'Cadastro não encontrado.' })
     await logAction('catalog.updated', 'Cadastro do catálogo atualizado.', null, { catalogId: row.id, status: row.status })
     res.json({ ok: true })

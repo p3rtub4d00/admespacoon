@@ -1225,3 +1225,22 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
 .catalog-review .primary { background:#177ed7; color:white; }
 .catalog-review { border:0; box-shadow:0 30px 90px #14314c40; }
 .catalog-review::backdrop { background:#0a1f3094; backdrop-filter:blur(5px); }
+.catalog-alert-button { display:flex; align-items:center; gap:6px; min-height:38px; padding:8px 11px; border:1px solid #dce7f1; border-radius:10px; background:#fff; color:#276aa3; }
+.catalog-alert-button span,.catalog-nav-count,.catalog-count { background:#f57827; color:white; min-width:20px; padding:2px 6px; border-radius:12px; font-size:11px; font-weight:800; text-align:center; }
+.catalog-nav-count { margin-left:auto; }
+.catalog-inbox { margin-bottom:20px; }
+.catalog-inbox .card-head h2 { display:flex; align-items:center; gap:8px; }
+.catalog-inbox > p { color:#637d90; font-size:12px; line-height:1.7; }
+.catalog-inbox-list article { display:flex; justify-content:space-between; align-items:center; gap:20px; border-top:1px solid #e6edf4; padding:17px 0; }
+.catalog-inbox-list strong { font-size:14px; }
+.catalog-inbox-list p { color:#678197; font-size:12px; margin:6px 0; }
+.catalog-inbox-list small { color:#8a9aa8; font-size:10px; }
+.catalog-inbox-list button,.catalog-inbox-more button { display:inline-flex; align-items:center; gap:7px; border:1px solid #d1e0ee; border-radius:8px; padding:10px 13px; background:#edf5ff; color:#22639d; font-weight:700; font-size:12px; }
+.catalog-admin .catalog-row-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+.catalog-admin .catalog-confirm { background:#e9f8ef; color:#207248; border-color:#cde8d6; }
+.catalog-admin .catalog-reject { background:#fff0ed; color:#a04332; border-color:#f1d1c9; }
+.catalog-public-status { color:#678197; font-size:12px; }
+@media(max-width:650px) { .catalog-inbox-list article { align-items:flex-start; flex-direction:column; gap:10px; } .catalog-alert-button { padding:7px; } }
+.catalog-admin .catalog-row-actions .catalog-confirm { background:#e9f8ef; color:#207248; border-color:#cde8d6; }
+.catalog-admin .catalog-row-actions .catalog-reject { background:#fff0ed; color:#a04332; border-color:#f1d1c9; }
+.catalog-inbox .catalog-count { color:white; font-size:11px; }
