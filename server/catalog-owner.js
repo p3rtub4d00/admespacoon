@@ -80,7 +80,7 @@ export function installCatalogOwner({ app, mongoose, Entry, requireMaster, write
     const page = Number(req.query.page || 1)
     if (!Number.isInteger(page) || page < 1 || page > 1000) fail('Página inválida.')
     const rows = await Entry.find({ ownerId: req.catalogOwner.id }).sort({ createdAt: -1, id: 1 }).skip((page - 1) * 30).limit(31).lean()
-    res.json({ phone: req.catalogOwner.phone, hasMore: rows.length > 30, entries: rows.slice(0, 30).map(row => ({ ...publicCatalog(row), ownerName: row.ownerName, email: row.email, status: row.status, photos: Array.from({ length: row.photoCount || 0 }, (_, i) => `/api/catalog/owner/photos/${row.id}/${i}`) })) })
+    res.json({ phone: req.catalogOwner.phone, hasMore: rows.length > 30, entries: rows.slice(0, 30).map(row => ({ ...publicCatalog(row), phone: row.phone, ownerName: row.ownerName, email: row.email, status: row.status, photos: Array.from({ length: row.photoCount || 0 }, (_, i) => `/api/catalog/owner/photos/${row.id}/${i}`) })) })
   }))
   app.get('/api/catalog/owner/photos/:id/:index', authenticate, route(async (req, res) => {
     const index = Number(req.params.index)

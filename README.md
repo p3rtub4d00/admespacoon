@@ -198,3 +198,9 @@ As coleções CatalogOwner e CatalogAccessRequest ficam no banco do Master. Cata
 Novos pedidos e alterações de anúncios aparecem nas notificações. Edições não republicam anúncios ocultos/recusados automaticamente. O cadastro continua gratuito, separado dos clubes pagos e de suas reservas/assinaturas.
 
 Não há novas variáveis obrigatórias. O segredo JWT_SECRET existente também assina as sessões com audiência exclusiva do anunciante. Publique o Master antes do catálogo.
+
+### Contato dos espaços com agendamento online
+
+A opção de reservas online exige um site HTTPS e direciona os visitantes apenas ao botão de reservas. O WhatsApp continua obrigatório como contato privado para liberar o acesso do responsável; não é retornado pelas APIs públicas desses anúncios. A área do dono e o Master continuam recebendo o telefone. Fornecedores e espaços sem agendamento mantêm o WhatsApp público. Anúncios antigos de espaços que já têm site usam reservas online por padrão; o responsável ou o Master pode desativar a opção se o link for apenas institucional.
+
+Atualize o Master antes do catálogo. Não há novas variáveis de ambiente ou migração obrigatória.

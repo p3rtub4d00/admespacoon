@@ -33,10 +33,13 @@ export function validateCatalog(input, { submission = false } = {}) {
     if (url.protocol !== 'https:' || url.username || url.password || !/^[a-z\d.-]+\.[a-z]{2,}$/i.test(url.hostname) || /(^|\.)(localhost|local|internal)$/i.test(url.hostname)) fail('Informe um site HTTPS público.')
     website = url.href
   }
+  if (input.onlineBooking !== undefined && typeof input.onlineBooking !== 'boolean') fail('Confira a opção de reservas online.')
+  const onlineBooking = category.type === 'space' && (input.onlineBooking ?? !!website)
+  if (onlineBooking && !website) fail('Informe o site de reservas para ativar o agendamento online.')
   const capacity = Number(input.capacity || 0)
   if (!Number.isInteger(capacity) || capacity < 0 || capacity > 100000) fail('Capacidade inválida.')
   if (submission && (input.consent !== true || input.company)) fail('Autorize a publicação dos dados do negócio.')
-  return { name: field(input.name, 100, 'nome do negócio', 3), ownerName: field(input.ownerName, 100, 'responsável', 3), email, phone, category: category.id, type: category.type, city: field(input.city, 80, 'cidade', 2), state, neighborhood: field(input.neighborhood || '', 100, 'bairro'), description: field(input.description, 1800, 'descrição', 20), website, capacity: category.type === 'space' ? capacity : 0, amenities: category.type === 'space' ? [...new Set(features)] : [] }
+  return { name: field(input.name, 100, 'nome do negócio', 3), ownerName: field(input.ownerName, 100, 'responsável', 3), email, phone, category: category.id, type: category.type, city: field(input.city, 80, 'cidade', 2), state, neighborhood: field(input.neighborhood || '', 100, 'bairro'), description: field(input.description, 1800, 'descrição', 20), website, onlineBooking, capacity: category.type === 'space' ? capacity : 0, amenities: category.type === 'space' ? [...new Set(features)] : [] }
 }
 export function validatePhotos(photos) {
   if (!Array.isArray(photos) || photos.length < 1 || photos.length > 6) fail('Envie de uma a seis fotos.')
@@ -50,7 +53,8 @@ export function validatePhotos(photos) {
   })
 }
 export function publicCatalog(row) {
-  return { id: row.id, name: row.name, type: row.type, category: row.category, city: row.city, state: row.state, neighborhood: row.neighborhood, description: row.description, phone: row.phone, website: row.website, capacity: row.capacity, amenities: row.amenities || [], photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/catalog/photos/${row.id}/${n}`) }
+  const onlineBooking = row.type === 'space' && !!row.website && (row.onlineBooking ?? true)
+  return { id: row.id, name: row.name, type: row.type, category: row.category, city: row.city, state: row.state, neighborhood: row.neighborhood, description: row.description, phone: onlineBooking ? undefined : row.phone, website: row.website, onlineBooking, capacity: row.capacity, amenities: row.amenities || [], photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/catalog/photos/${row.id}/${n}`) }
 }
 const escaped = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 export function catalogFilter(query) {
@@ -78,7 +82,7 @@ export function catalogReviewFilter() {
 export function installCatalog({ app, mongoose, requireMaster, writeLimiter, logAction, sessionSecret }) {
   const photoSchema = new mongoose.Schema({ data: Buffer, contentType: String }, { _id: false })
   const Entry = mongoose.model('CatalogEntry', new mongoose.Schema({
-    id: { type: String, unique: true, required: true }, ownerId: { type: String, index: true }, name: String, ownerName: String, email: String, phone: String, category: String, type: String, city: String, state: String, neighborhood: String, description: String, website: String, capacity: Number, amenities: [String], photoCount: Number,
+    id: { type: String, unique: true, required: true }, ownerId: { type: String, index: true }, name: String, ownerName: String, email: String, phone: String, category: String, type: String, city: String, state: String, neighborhood: String, description: String, website: String, onlineBooking: Boolean, capacity: Number, amenities: [String], photoCount: Number,
     photos: { type: [photoSchema], select: false }, status: { type: String, enum: ['pending', 'published', 'hidden', 'rejected'], default: 'published' }, reviewStatus: { type: String, enum: ['new', 'reviewed'], default: 'new' }, reviewedAt: Date, moderationNote: String, consentAt: Date, consentVersion: String, publishedAt: Date,
   }, { timestamps: true }).index({ status: 1, type: 1, createdAt: -1 }).index({ reviewStatus: 1, status: 1, createdAt: -1 }))
   const { Request } = installCatalogOwner({ app, mongoose, Entry, requireMaster, writeLimiter, logAction, sessionSecret })
@@ -127,12 +131,12 @@ export function installCatalog({ app, mongoose, requireMaster, writeLimiter, log
     const page = Number(req.query.page || 1)
     if (!Number.isInteger(page) || page < 1 || page > 1000) fail('Página inválida.')
     const rows = await Entry.find(status === 'review' ? catalogReviewFilter() : { status }).sort({ updatedAt: -1, id: 1 }).skip((page - 1) * 30).limit(31).lean()
-    res.json({ entries: rows.slice(0, 30).map(row => ({ ...publicCatalog(row), ownerName: row.ownerName, email: row.email, status: row.status, reviewStatus: row.reviewStatus || (row.status === 'pending' ? 'new' : 'reviewed'), moderationNote: row.moderationNote || '', createdAt: row.createdAt, consentAt: row.consentAt, photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/master/catalog/photos/${row.id}/${n}`) })), hasMore: rows.length > 30 })
+    res.json({ entries: rows.slice(0, 30).map(row => ({ ...publicCatalog(row), phone: row.phone, ownerName: row.ownerName, email: row.email, status: row.status, reviewStatus: row.reviewStatus || (row.status === 'pending' ? 'new' : 'reviewed'), moderationNote: row.moderationNote || '', createdAt: row.createdAt, consentAt: row.consentAt, photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/master/catalog/photos/${row.id}/${n}`) })), hasMore: rows.length > 30 })
   }))
   app.get('/api/master/catalog/entries/:id', requireMaster, route(async (req, res) => {
     const row = await Entry.findOne({ id: req.params.id }).lean()
     if (!row) return res.status(404).json({ error: 'Cadastro não encontrado.' })
-    res.json({ ...publicCatalog(row), ownerName: row.ownerName, email: row.email, status: row.status, reviewStatus: row.reviewStatus || (row.status === 'pending' ? 'new' : 'reviewed'), moderationNote: row.moderationNote || '', consentAt: row.consentAt, photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/master/catalog/photos/${row.id}/${n}`) })
+    res.json({ ...publicCatalog(row), phone: row.phone, ownerName: row.ownerName, email: row.email, status: row.status, reviewStatus: row.reviewStatus || (row.status === 'pending' ? 'new' : 'reviewed'), moderationNote: row.moderationNote || '', consentAt: row.consentAt, photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/master/catalog/photos/${row.id}/${n}`) })
   }))
   app.get('/api/master/catalog/photos/:id/:index', requireMaster, route((req, res) => photo(req, res, true)))
   app.put('/api/master/catalog/:id', requireMaster, writeLimiter, route(async (req, res) => {
