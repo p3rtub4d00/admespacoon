@@ -1244,3 +1244,5 @@ td > .sub { margin-top: 3px; color: #8799a3; font-size: 8px; }
 .catalog-admin .catalog-row-actions .catalog-confirm { background:#e9f8ef; color:#207248; border-color:#cde8d6; }
 .catalog-admin .catalog-row-actions .catalog-reject { background:#fff0ed; color:#a04332; border-color:#f1d1c9; }
 .catalog-inbox .catalog-count { color:white; font-size:11px; }
+
+.catalog-admin button.catalog-delete{background:#b42318;color:#fff;border-color:#b42318;min-height:42px}.catalog-admin button.catalog-delete:hover{background:#912018;border-color:#912018}.catalog-review form>button.catalog-delete{margin:12px 0 0 12px}@media(max-width:640px){.catalog-admin .catalog-row-actions button.catalog-delete{font-size:13px}.catalog-review form>button.catalog-delete{margin:12px 0 0;width:100%;font-size:13px}}

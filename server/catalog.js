@@ -142,5 +142,12 @@ export function installCatalog({ app, mongoose, requireMaster, writeLimiter, log
     await logAction('catalog.updated', 'Cadastro do catálogo atualizado.', null, { catalogId: row.id, status: row.status })
     res.json({ ok: true })
   }))
+  app.delete('/api/master/catalog/:id', requireMaster, writeLimiter, route(async (req, res) => {
+    if (req.body?.confirmation !== req.params.id) fail('Confirme a exclusão do anúncio.')
+    const row = await Entry.findOneAndDelete({ id: req.params.id }).lean()
+    if (!row) return res.status(404).json({ error: 'Cadastro não encontrado.' })
+    await logAction('catalog.deleted', 'Anúncio e fotos excluídos do catálogo.', null, { catalogId: row.id, status: row.status })
+    res.json({ ok: true })
+  }))
   return Entry
 }

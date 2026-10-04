@@ -75,3 +75,23 @@ test('free signup publishes immediately; master review clears notifications and 
 test('notification queue includes old pending entries and new public ads, without notifying about already reviewed or refused entries', () => {
   assert.deepEqual(catalogReviewFilter(), { $or: [{ status: 'pending' }, { status: 'published', reviewStatus: 'new' }] })
 })
+
+test('only master can permanently delete an ad and its photos, with explicit confirmation and audit', async t => {
+  let stored = { ...input, id: 'delete-test', status: 'published', reviewStatus: 'new', photos: [{ data: bytes }], photoCount: 1 }
+  const audits = []
+  t.mock.method(Entry, 'findOneAndDelete', filter => ({ lean: async () => { assert.deepEqual(filter, { id: 'delete-test' }); const row = stored; stored = null; return row } }))
+  t.mock.method(Entry, 'findOne', () => ({ select() { return this }, lean: async () => stored }))
+  t.mock.method(Log, 'create', async value => { audits.push(value); return value })
+  t.mock.method(Club, 'deleteOne', async () => assert.fail('Paid clubs must not be deleted'))
+  t.mock.method(Payment, 'deleteOne', async () => assert.fail('Payments must not be deleted'))
+  const url = '/api/master/catalog/delete-test'
+  assert.equal((await req(url, { confirmation: 'delete-test' }, {}, 'DELETE')).status, 401)
+  assert.equal((await req(url, { confirmation: 'wrong' }, auth, 'DELETE')).status, 400)
+  assert.ok(stored)
+  assert.equal((await req(url, { confirmation: 'delete-test' }, auth, 'DELETE')).status, 200)
+  assert.equal(stored, null); assert.equal(audits.length, 1)
+  assert.equal((await req('/api/catalog/entries/delete-test')).status, 404)
+  assert.equal((await req('/api/catalog/photos/delete-test/0')).status, 404)
+  assert.equal((await req('/api/master/catalog/photos/delete-test/0', null, auth)).status, 404)
+  assert.equal((await req(url, { confirmation: 'delete-test' }, auth, 'DELETE')).status, 404)
+})
