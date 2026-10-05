@@ -7,13 +7,14 @@ export const categories = [
   { id: 'mesas', label: 'Mesas e cadeiras', type: 'supplier' }, { id: 'brinquedos', label: 'Pula-pula e brinquedos', type: 'supplier' }, { id: 'doces', label: 'Doces e bolos', type: 'supplier' }, { id: 'decoracao', label: 'Decoração', type: 'supplier' }, { id: 'buffet', label: 'Buffet', type: 'supplier' }, { id: 'fotografia', label: 'Fotografia', type: 'supplier' }, { id: 'outros', label: 'Outros serviços', type: 'supplier' },
 ]
 export const amenities = [
-  ['piscina', 'Piscina'], ['churrasqueira', 'Churrasqueira'], ['pulapula', 'Pula-pula'], ['quarto', 'Quarto'], ['sinuca', 'Sinuca'], ['campo', 'Campo de futebol'], ['freezer', 'Freezer'], ['cozinha', 'Cozinha'], ['estacionamento', 'Estacionamento'], ['acessibilidade', 'Acessibilidade'],
+  ['piscina', 'Piscina'], ['churrasqueira', 'Churrasqueira'], ['pulapula', 'Pula-pula'], ['quarto', 'Quarto'], ['sinuca', 'Sinuca'], ['campo', 'Campo de futebol'], ['freezer', 'Freezer'], ['cozinha', 'Cozinha'], ['estacionamento', 'Estacionamento'], ['acessibilidade', 'Acessibilidade'], ['tv', 'TV'], ['bebedouro', 'Bebedouro'], ['arcondicionado', 'Ar-condicionado'],
 ].map(([id, label]) => ({ id, label }))
 const fail = message => { throw Object.assign(new Error(message), { statusCode: 400 }) }
 const field = (value, max, label, min = 0) => {
   if (typeof value !== 'string' || value.trim().length < min || value.length > max) fail('Confira o campo ' + label + '.')
   return value.trim()
 }
+const amenityKey = value => value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/[\s-]+/g, '')
 export function validateCatalog(input, { submission = false } = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail('Cadastro inválido.')
   const category = categories.find(c => c.id === input.category)
@@ -24,6 +25,15 @@ export function validateCatalog(input, { submission = false } = {}) {
   if (!'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' ').includes(state)) fail('Informe uma UF válida.')
   const features = input.amenities ?? []
   if (!Array.isArray(features) || features.length > amenities.length || features.some(a => !amenities.some(v => v.id === a))) fail('Estrutura inválida.')
+  const additional = input.customAmenities ?? []
+  if (!Array.isArray(additional) || additional.length > 20) fail('Adicione no máximo 20 outras estruturas.')
+  const customAmenities = [], selectedFeatures = [...features], seen = new Set()
+  for (const item of additional) {
+    const label = field(item, 60, 'outra estrutura', 1).replace(/\s+/g, ' ').normalize('NFC'), key = amenityKey(label)
+    const fixed = amenities.find(option => amenityKey(option.label) === key)
+    if (fixed) selectedFeatures.push(fixed.id)
+    else if (!seen.has(key)) { seen.add(key); customAmenities.push(label) }
+  }
   const email = field(input.email || '', 160, 'e-mail')
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail('Confira o e-mail.')
   const instagram = field(input.instagram ?? '', 31, 'Instagram').toLowerCase()
@@ -41,7 +51,7 @@ export function validateCatalog(input, { submission = false } = {}) {
   const capacity = Number(input.capacity || 0)
   if (!Number.isInteger(capacity) || capacity < 0 || capacity > 100000) fail('Capacidade inválida.')
   if (submission && (input.consent !== true || input.company)) fail('Autorize a publicação dos dados do negócio.')
-  return { name: field(input.name, 100, 'nome do negócio', 3), ownerName: field(input.ownerName, 100, 'responsável', 3), email, phone, instagram, category: category.id, type: category.type, city: field(input.city, 80, 'cidade', 2), state, neighborhood: field(input.neighborhood || '', 100, 'bairro'), description: field(input.description, 1800, 'descrição', 20), website, onlineBooking, capacity: category.type === 'space' ? capacity : 0, amenities: category.type === 'space' ? [...new Set(features)] : [] }
+  return { name: field(input.name, 100, 'nome do negócio', 3), ownerName: field(input.ownerName, 100, 'responsável', 3), email, phone, instagram, category: category.id, type: category.type, city: field(input.city, 80, 'cidade', 2), state, neighborhood: field(input.neighborhood || '', 100, 'bairro'), description: field(input.description, 1800, 'descrição', 20), website, onlineBooking, capacity: category.type === 'space' ? capacity : 0, amenities: category.type === 'space' ? [...new Set(selectedFeatures)] : [], customAmenities: category.type === 'space' ? customAmenities : [] }
 }
 export function validatePhotos(photos) {
   if (!Array.isArray(photos) || photos.length < 1 || photos.length > 6) fail('Envie de uma a seis fotos.')
@@ -56,7 +66,7 @@ export function validatePhotos(photos) {
 }
 export function publicCatalog(row) {
   const onlineBooking = row.type === 'space' && !!row.website && (row.onlineBooking ?? true)
-  return { id: row.id, name: row.name, type: row.type, category: row.category, city: row.city, state: row.state, neighborhood: row.neighborhood, description: row.description, phone: onlineBooking ? undefined : row.phone, website: row.website, instagram: row.instagram || '', onlineBooking, capacity: row.capacity, amenities: row.amenities || [], photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/catalog/photos/${row.id}/${n}`) }
+  return { id: row.id, name: row.name, type: row.type, category: row.category, city: row.city, state: row.state, neighborhood: row.neighborhood, description: row.description, phone: onlineBooking ? undefined : row.phone, website: row.website, instagram: row.instagram || '', onlineBooking, capacity: row.capacity, amenities: row.amenities || [], customAmenities: row.customAmenities || [], photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/catalog/photos/${row.id}/${n}`) }
 }
 const escaped = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 export function catalogFilter(query) {
@@ -84,7 +94,7 @@ export function catalogReviewFilter() {
 export function installCatalog({ app, mongoose, requireMaster, writeLimiter, logAction, sessionSecret, notifyMaster }) {
   const photoSchema = new mongoose.Schema({ data: Buffer, contentType: String }, { _id: false })
   const Entry = mongoose.model('CatalogEntry', new mongoose.Schema({
-    id: { type: String, unique: true, required: true }, ownerId: { type: String, index: true }, name: String, ownerName: String, email: String, phone: String, instagram: String, category: String, type: String, city: String, state: String, neighborhood: String, description: String, website: String, onlineBooking: Boolean, capacity: Number, amenities: [String], photoCount: Number,
+    id: { type: String, unique: true, required: true }, ownerId: { type: String, index: true }, name: String, ownerName: String, email: String, phone: String, instagram: String, category: String, type: String, city: String, state: String, neighborhood: String, description: String, website: String, onlineBooking: Boolean, capacity: Number, amenities: [String], customAmenities: [String], photoCount: Number,
     photos: { type: [photoSchema], select: false }, status: { type: String, enum: ['pending', 'published', 'hidden', 'rejected'], default: 'published' }, reviewStatus: { type: String, enum: ['new', 'reviewed'], default: 'new' }, reviewedAt: Date, moderationNote: String, consentAt: Date, consentVersion: String, publishedAt: Date,
   }, { timestamps: true }).index({ status: 1, type: 1, createdAt: -1 }).index({ reviewStatus: 1, status: 1, createdAt: -1 }))
   const { Request } = installCatalogOwner({ app, mongoose, Entry, requireMaster, writeLimiter, logAction, sessionSecret, notifyMaster })
