@@ -1,3 +1,4 @@
+import { ClubPasswordAccess } from './ClubAccess'
 import AiChatControl from './AiChatControl'
 import CatalogNotifications from './CatalogNotifications'
 import CatalogAdmin from './CatalogAdmin'
@@ -631,7 +632,7 @@ function App() {
               if (id === 'catalog') setCatalogReviewId(null)
               setMobileOpen(false)
             }}>
-              <Icon size={18} /> {label}{id === 'notifications' && (catalogNotifications.count + (catalogNotifications.accessCount || 0)) > 0 && <span className="catalog-nav-count">{(catalogNotifications.count + (catalogNotifications.accessCount || 0))}</span>}
+              <Icon size={18} /> {label}{id === 'notifications' && (catalogNotifications.count + (catalogNotifications.accessCount || 0) + (catalogNotifications.recoveryCount || 0)) > 0 && <span className="catalog-nav-count">{(catalogNotifications.count + (catalogNotifications.accessCount || 0) + (catalogNotifications.recoveryCount || 0))}</span>}
             </button>
           ))}
         </nav>
@@ -656,7 +657,7 @@ function App() {
             <h1>{nav.find(([id]) => id === active)?.[1]}</h1>
           </div>
           <div className="topbar-actions">
-            <button className="catalog-alert-button" title="Notificações de anúncios do catálogo" aria-label={(catalogNotifications.count + (catalogNotifications.accessCount || 0)) ? `${(catalogNotifications.count + (catalogNotifications.accessCount || 0))} ${(catalogNotifications.count + (catalogNotifications.accessCount || 0)) === 1 ? 'notificação do catálogo' : 'notificações do catálogo'}` : 'Notificações do catálogo'} onClick={() => { setActive('notifications'); setMobileOpen(false); loadCatalogNotifications() }}><BellRing size={18}/>{(catalogNotifications.count + (catalogNotifications.accessCount || 0)) > 0 && <span>{(catalogNotifications.count + (catalogNotifications.accessCount || 0))}</span>}</button>
+            <button className="catalog-alert-button" title="Notificações do Master" aria-label={(catalogNotifications.count + (catalogNotifications.accessCount || 0) + (catalogNotifications.recoveryCount || 0)) ? `${(catalogNotifications.count + (catalogNotifications.accessCount || 0) + (catalogNotifications.recoveryCount || 0))} ${(catalogNotifications.count + (catalogNotifications.accessCount || 0) + (catalogNotifications.recoveryCount || 0)) === 1 ? 'notificação do Master' : 'notificações do Master'}` : 'Notificações do Master'} onClick={() => { setActive('notifications'); setMobileOpen(false); loadCatalogNotifications() }}><BellRing size={18}/>{(catalogNotifications.count + (catalogNotifications.accessCount || 0) + (catalogNotifications.recoveryCount || 0)) > 0 && <span>{(catalogNotifications.count + (catalogNotifications.accessCount || 0) + (catalogNotifications.recoveryCount || 0))}</span>}</button>
             <button className="install-master" onClick={installApp} disabled={appInstalled}>
               <Download size={17} />
               {appInstalled ? 'Instalado' : 'Instalar app'}
@@ -1181,6 +1182,8 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
               <div><span>Cadastrado em</span><strong>{dateTimeBR(club.createdAt)}</strong></div>
             </div>
 
+            <ClubPasswordAccess key={club.id + ':' + club.demoMode} club={club} />
+            <details className="club-detail-fold"><summary><span>Preparação do clube</span><small>{club.provisioning?.ready ? 'Pronto para entrega' : 'Configuração pendente'} · Ver detalhes</small></summary>
             <section className="provisioning-section">
               <div className="detail-section-head">
                 <div><span>Preparação do cliente</span><h3>{club.provisioning?.ready ? 'Pronto para entrega' : 'Configuração pendente'}</h3></div>
@@ -1206,7 +1209,8 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
               </details>
             </section>
 
-            <AiChatControl key={club.id} clubId={club.id} />
+            </details>
+            <details className="club-detail-fold"><summary><span>Assistente com IA</span><small>Ativação, limite e consumo · Ver detalhes</small></summary><AiChatControl key={club.id} clubId={club.id} /></details>
             <section className="payment-provider-section">
               <div className="detail-section-head">
                 <div>
@@ -1277,34 +1281,7 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
             </section>
 
             <div className="client-detail-actions">
-              {!club.demoMode && (
-                <button
-                  onClick={async () => {
-                    try {
-                      const result = await api.createAdminAccessLink(
-                        club.id,
-                        club.adminPasswordConfigured ? 'reset' : 'first-access',
-                      )
-                      if (navigator.clipboard?.writeText) {
-                        await navigator.clipboard.writeText(result.url)
-                        window.alert(
-                          club.adminPasswordConfigured
-                            ? 'Link de redefinição copiado. Ele expira em 30 minutos.'
-                            : 'Link de primeiro acesso copiado. Ele expira em 30 minutos.'
-                        )
-                      } else {
-                        window.prompt('Copie o link e envie ao proprietário:', result.url)
-                      }
-                      onRefresh?.()
-                    } catch (error) {
-                      window.alert(error.message || 'Não foi possível gerar o link.')
-                    }
-                  }}
-                >
-                  <KeyRound size={15} />
-                  {club.adminPasswordConfigured ? 'Redefinir senha' : 'Gerar primeiro acesso'}
-                </button>
-              )}
+
               <button onClick={() => onEdit(club)}><Pencil size={15} /> Editar cadastro</button>
               <button
                 className={club.demoMode ? 'demo-active' : 'demo'}

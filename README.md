@@ -227,3 +227,14 @@ Publicar o backend/painel Master antes do catálogo. Não há novas variáveis d
 Nos detalhes de cada clube, a seção Assistente com IA permite ativar o chat e definir o limite mensal (padrão: 1.000 perguntas). Todos os clubes começam desativados. A chave `GEMINI_API_KEY` deve estar no ambiente do serviço de reservas, não no Master nem no navegador. Publique o Master antes do serviço de reservas. Ativar a opção não altera a mensalidade.
 
 O painel mostra consultas iniciadas, chamadas ao modelo e tokens do mês em Porto Velho. Inclui falhas; contadores são sincronizados pelo serviço do clube após consultas. Reenvios não duplicam os valores e uma falha de sincronização é recuperada na próxima consulta. Mensagens não são armazenadas no Master. O limite de perguntas não representa orçamento financeiro nem substitui as cotas do provedor.
+
+
+### Recuperação de senha do painel dos clubes
+
+O proprietário solicita recuperação na tela de login do seu clube usando o celular cadastrado. O serviço autentica o pedido pela licença do próprio clube; número diferente recebe o mesmo retorno público, sem identificar cadastros e sem criar pedido. Não exige senha nem mensalidade ativa para solicitar atendimento. Demonstração não utiliza senha e não cria pedidos.
+
+O Master recebe o pedido na área Notificações e dispara o Web Push existente para dispositivos habilitados, com destino à mesma área após login. Confira o responsável, gere o link e abra o WhatsApp pelo botão. O envio da mensagem é manual e usa somente o celular cadastrado; se ele mudou após o pedido, a emissão é recusada até uma nova solicitação. O link mantém validade de 30 minutos, uso único, hash no banco e revogação de links anteriores. Solicitar recuperação não altera a senha e não emite link automaticamente.
+
+A coleção ClubRecoveryRequest registra um pedido por clube; pedidos pendentes não são duplicados, alertas repetidos têm intervalo mínimo de um minuto e pedidos atendidos/arquivados podem ser reabertos após dez minutos. A lista mostra até 50 pendentes por vez; ao atender, atualize para carregar os demais. Há limite de cinco solicitações por 15 minutos por clube no Master e por IP no serviço público.
+
+Na ficha, Acesso ao painel fica visível inclusive na demonstração (geração desabilitada e explicação). Preparação do clube e Assistente com IA começam recolhidos. Publique o Master antes do serviço de reservas. Não há novas variáveis. Valide o recebimento físico do push no PWA depois do deploy; testes locais verificam o disparo, não o dispositivo real.

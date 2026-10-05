@@ -16,6 +16,9 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  clubRecoveryRequests: () => request('/api/master/club-recovery'),
+  issueClubRecovery: id => request('/api/master/club-recovery/' + encodeURIComponent(id) + '/issue', { method: 'POST', body: '{}' }),
+  dismissClubRecovery: id => request('/api/master/club-recovery/' + encodeURIComponent(id) + '/dismiss', { method: 'POST', body: '{}' }),
   aiChat: id => request('/api/master/clubs/' + encodeURIComponent(id) + '/ai-chat'),
   saveAiChat: (id, payload) => request('/api/master/clubs/' + encodeURIComponent(id) + '/ai-chat', { method: 'PUT', body: JSON.stringify(payload) }),
   catalogAccessRequests: (page = 1) => request('/api/master/catalog/access-requests?page=' + page),

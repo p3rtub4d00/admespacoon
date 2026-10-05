@@ -134,7 +134,8 @@ export function installCatalog({ app, mongoose, requireMaster, writeLimiter, log
     const filter = catalogReviewFilter()
     const [count, rows] = await Promise.all([Entry.countDocuments(filter), Entry.find(filter).sort({ updatedAt: -1, id: 1 }).limit(5).lean()])
     const accessCount = await Request.countDocuments({ status: 'pending' })
-    res.json({ count, accessCount, entries: rows.map(row => ({ id: row.id, name: row.name, type: row.type, city: row.city, state: row.state, status: row.status, createdAt: row.updatedAt || row.createdAt })) })
+    const recoveryCount = mongoose.models.ClubRecoveryRequest ? await mongoose.models.ClubRecoveryRequest.countDocuments({ status: 'pending' }) : 0
+    res.json({ count, accessCount, recoveryCount, entries: rows.map(row => ({ id: row.id, name: row.name, type: row.type, city: row.city, state: row.state, status: row.status, createdAt: row.updatedAt || row.createdAt })) })
   }))
   app.get('/api/master/catalog/meta', requireMaster, (_req, res) => res.json({ categories, amenities }))
   app.get('/api/master/catalog', requireMaster, route(async (req, res) => {
