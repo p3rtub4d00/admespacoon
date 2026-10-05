@@ -14,7 +14,7 @@ const base = 'http://127.0.0.1:' + server.address().port
 const Access = mongoose.model('CatalogAccessRequest')
 const Entry = mongoose.model('CatalogEntry'), Club = mongoose.model('Club'), Payment = mongoose.model('MasterPayment'), Log = mongoose.model('AuditLog')
 const auth = { Cookie: 'espacoon_master=' + jwt.sign({ role: 'master' }, process.env.JWT_SECRET) }
-const input = { name: 'Clube de Teste', ownerName: 'Dono do Clube', email: 'dono@example.com', phone: '(69) 99999-0000', category: 'clube', city: 'Porto Velho', state: 'ro', description: 'Espaço com piscina e churrasqueira para festas.', amenities: ['piscina', 'quarto'], website: 'https://demo.rubli.com.br', consent: true }
+const input = { instagram: '@Clube.Teste_pvh', name: 'Clube de Teste', ownerName: 'Dono do Clube', email: 'dono@example.com', phone: '(69) 99999-0000', category: 'clube', city: 'Porto Velho', state: 'ro', description: 'Espaço com piscina e churrasqueira para festas.', amenities: ['piscina', 'quarto'], website: 'https://demo.rubli.com.br', consent: true }
 const bytes = Buffer.alloc(120, 4); bytes[0] = 255; bytes[1] = 216; bytes[118] = 255; bytes[119] = 217
 const photo = 'data:image/jpeg;base64,' + bytes.toString('base64')
 const req = (path, body, headers = {}, method = 'GET') => fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) })
@@ -45,7 +45,7 @@ test('free signup publishes immediately; master review clears notifications and 
   t.mock.method(Payment, 'create', async () => assert.fail('No payment should be created'))
   t.mock.method(Log, 'create', async () => ({}))
   const result = await req('/api/catalog/submissions', { ...input, photos: [photo], status: 'rejected', reviewStatus: 'reviewed' }, {}, 'POST')
-  assert.equal(result.status, 201); assert.equal(stored.status, 'published'); assert.equal(stored.reviewStatus, 'new'); assert.ok(stored.publishedAt instanceof Date); assert.ok(stored.consentAt instanceof Date); assert.equal(stored.photoCount, 1)
+  assert.equal(result.status, 201); assert.equal(stored.status, 'published'); assert.equal(stored.instagram, '@clube.teste_pvh'); assert.equal(stored.reviewStatus, 'new'); assert.ok(stored.publishedAt instanceof Date); assert.ok(stored.consentAt instanceof Date); assert.equal(stored.photoCount, 1)
   assert.equal((await result.json()).id, undefined)
   assert.equal((await req('/api/master/catalog')).status, 401)
   assert.equal((await req('/api/master/catalog/' + stored.id, input, {}, 'PUT')).status, 401)
@@ -64,7 +64,7 @@ test('free signup publishes immediately; master review clears notifications and 
   assert.equal((await req('/api/master/catalog/' + stored.id, { ...input, status: 'published' }, auth, 'PUT')).status, 200)
   assert.equal(stored.onlineBooking, true)
   const publicBooking = await (await req('/api/catalog/entries/' + stored.id)).json()
-  assert.equal(publicBooking.onlineBooking, true); assert.equal(publicBooking.phone, undefined)
+  assert.equal(publicBooking.instagram, '@clube.teste_pvh'); assert.equal(publicBooking.onlineBooking, true); assert.equal(publicBooking.phone, undefined)
   const privateBooking = await (await req('/api/master/catalog/entries/' + stored.id, null, auth)).json()
   assert.equal(privateBooking.phone, stored.phone)
   assert.equal(stored.reviewStatus, 'reviewed'); assert.ok(stored.reviewedAt instanceof Date)
@@ -122,4 +122,17 @@ test('online reservations require a site, hide public phone, and preserve contac
   assert.equal(publicCatalog(legacy).onlineBooking, true)
   assert.equal(publicCatalog(legacy).phone, undefined)
   assert.equal(publicCatalog({ ...legacy, website: '' }).phone, '69999990000')
+})
+
+
+test('Instagram is optional, accepts only an @handle and is exposed without accepting arbitrary links', () => {
+  assert.equal(validateCatalog({ ...input, instagram: undefined }).instagram, '')
+  assert.equal(validateCatalog({ ...input, instagram: '' }).instagram, '')
+  assert.equal(validateCatalog({ ...input, instagram: '  @Clube.Teste_PVH  ' }).instagram, '@clube.teste_pvh')
+  assert.equal(publicCatalog(validateCatalog(input)).instagram, '@clube.teste_pvh')
+  assert.equal(publicCatalog({ id: 'old' }).instagram, '')
+  assert.equal(validateCatalog({ ...input, category: 'buffet' }).instagram, '@clube.teste_pvh')
+  for (const instagram of ['https://instagram.com/clube', 'instagram.com/clube', 'clube', '@', '@nome/com', '@nome?x=1', '@nome com', '@' + 'a'.repeat(31), { $ne: null }, 123]) {
+    assert.throws(() => validateCatalog({ ...input, instagram }))
+  }
 })

@@ -26,6 +26,8 @@ export function validateCatalog(input, { submission = false } = {}) {
   if (!Array.isArray(features) || features.length > amenities.length || features.some(a => !amenities.some(v => v.id === a))) fail('Estrutura inválida.')
   const email = field(input.email || '', 160, 'e-mail')
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail('Confira o e-mail.')
+  const instagram = field(input.instagram ?? '', 31, 'Instagram').toLowerCase()
+  if (instagram && !/^@[a-z0-9._]{1,30}$/.test(instagram)) fail('Informe apenas o @perfil do Instagram, sem link.')
   let website = field(input.website || '', 300, 'site')
   if (website) {
     let url
@@ -39,7 +41,7 @@ export function validateCatalog(input, { submission = false } = {}) {
   const capacity = Number(input.capacity || 0)
   if (!Number.isInteger(capacity) || capacity < 0 || capacity > 100000) fail('Capacidade inválida.')
   if (submission && (input.consent !== true || input.company)) fail('Autorize a publicação dos dados do negócio.')
-  return { name: field(input.name, 100, 'nome do negócio', 3), ownerName: field(input.ownerName, 100, 'responsável', 3), email, phone, category: category.id, type: category.type, city: field(input.city, 80, 'cidade', 2), state, neighborhood: field(input.neighborhood || '', 100, 'bairro'), description: field(input.description, 1800, 'descrição', 20), website, onlineBooking, capacity: category.type === 'space' ? capacity : 0, amenities: category.type === 'space' ? [...new Set(features)] : [] }
+  return { name: field(input.name, 100, 'nome do negócio', 3), ownerName: field(input.ownerName, 100, 'responsável', 3), email, phone, instagram, category: category.id, type: category.type, city: field(input.city, 80, 'cidade', 2), state, neighborhood: field(input.neighborhood || '', 100, 'bairro'), description: field(input.description, 1800, 'descrição', 20), website, onlineBooking, capacity: category.type === 'space' ? capacity : 0, amenities: category.type === 'space' ? [...new Set(features)] : [] }
 }
 export function validatePhotos(photos) {
   if (!Array.isArray(photos) || photos.length < 1 || photos.length > 6) fail('Envie de uma a seis fotos.')
@@ -54,7 +56,7 @@ export function validatePhotos(photos) {
 }
 export function publicCatalog(row) {
   const onlineBooking = row.type === 'space' && !!row.website && (row.onlineBooking ?? true)
-  return { id: row.id, name: row.name, type: row.type, category: row.category, city: row.city, state: row.state, neighborhood: row.neighborhood, description: row.description, phone: onlineBooking ? undefined : row.phone, website: row.website, onlineBooking, capacity: row.capacity, amenities: row.amenities || [], photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/catalog/photos/${row.id}/${n}`) }
+  return { id: row.id, name: row.name, type: row.type, category: row.category, city: row.city, state: row.state, neighborhood: row.neighborhood, description: row.description, phone: onlineBooking ? undefined : row.phone, website: row.website, instagram: row.instagram || '', onlineBooking, capacity: row.capacity, amenities: row.amenities || [], photos: Array.from({ length: row.photoCount || 0 }, (_, n) => `/api/catalog/photos/${row.id}/${n}`) }
 }
 const escaped = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 export function catalogFilter(query) {
@@ -82,7 +84,7 @@ export function catalogReviewFilter() {
 export function installCatalog({ app, mongoose, requireMaster, writeLimiter, logAction, sessionSecret, notifyMaster }) {
   const photoSchema = new mongoose.Schema({ data: Buffer, contentType: String }, { _id: false })
   const Entry = mongoose.model('CatalogEntry', new mongoose.Schema({
-    id: { type: String, unique: true, required: true }, ownerId: { type: String, index: true }, name: String, ownerName: String, email: String, phone: String, category: String, type: String, city: String, state: String, neighborhood: String, description: String, website: String, onlineBooking: Boolean, capacity: Number, amenities: [String], photoCount: Number,
+    id: { type: String, unique: true, required: true }, ownerId: { type: String, index: true }, name: String, ownerName: String, email: String, phone: String, instagram: String, category: String, type: String, city: String, state: String, neighborhood: String, description: String, website: String, onlineBooking: Boolean, capacity: Number, amenities: [String], photoCount: Number,
     photos: { type: [photoSchema], select: false }, status: { type: String, enum: ['pending', 'published', 'hidden', 'rejected'], default: 'published' }, reviewStatus: { type: String, enum: ['new', 'reviewed'], default: 'new' }, reviewedAt: Date, moderationNote: String, consentAt: Date, consentVersion: String, publishedAt: Date,
   }, { timestamps: true }).index({ status: 1, type: 1, createdAt: -1 }).index({ reviewStatus: 1, status: 1, createdAt: -1 }))
   const { Request } = installCatalogOwner({ app, mongoose, Entry, requireMaster, writeLimiter, logAction, sessionSecret, notifyMaster })
