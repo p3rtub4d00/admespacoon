@@ -1,3 +1,4 @@
+import { installClubRecovery } from './club-recovery.js'
 import { installMasterAiChat } from './ai-chat.js'
 import { installCatalog } from './catalog.js'
 import { installReferrals, isReferralMonthlyPayment, referralPercentage } from './referrals.js'
@@ -1628,6 +1629,8 @@ app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) =
   }
 })
 
+installClubRecovery({ app, mongoose, Club, requireMaster, authenticateClubLicense, writeLimiter, notifyMaster, createAccessLink: createClubAdminAccessLink, logAction })
+
 installMasterAiChat({ app, mongoose, Club, requireMaster, writeLimiter, authenticateClubLicense, logAction })
 
 installCatalog({ app, mongoose, requireMaster, writeLimiter, logAction, sessionSecret: JWT_SECRET, notifyMaster })
@@ -1705,14 +1708,9 @@ app.post('/api/master/clubs', requireMaster, writeLimiter, async (req, res, next
   }
 })
 
-app.post('/api/master/clubs/:id/admin-access-link', requireMaster, writeLimiter, async (req, res, next) => {
-  try {
-    const club = await Club.findOne({ id: req.params.id })
-    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
-    if (club.demoMode) return res.status(409).json({ error: 'O modo demonstração não usa senha.' })
-
+async function createClubAdminAccessLink(club, req, requestedPurpose = 'reset') {
+  if (club.demoMode) throw Object.assign(new Error('O modo demonstração não usa senha.'), { statusCode: 409 })
     const configured = Boolean(club.adminAuth?.passwordHash && club.adminAuth?.passwordSalt)
-    const requestedPurpose = req.body?.purpose === 'reset' ? 'reset' : 'first-access'
     const purpose = configured ? 'reset' : requestedPurpose
     const rawToken = crypto.randomBytes(32).toString('base64url')
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000)
@@ -1734,8 +1732,17 @@ app.post('/api/master/clubs/:id/admin-access-link', requireMaster, writeLimiter,
       club,
     )
 
+    return { url, expiresAt, purpose, club: publicClub(club), whatsappUrl: 'https://wa.me/55' + onlyDigits(club.phone).replace(/^55(?=\d{10,11}$)/, '') + '?text=' + encodeURIComponent('Olá! Aqui está o link para definir uma nova senha do painel ' + club.establishmentName + ': ' + url + '\nO link é válido por 30 minutos e só pode ser usado uma vez.') }
+}
+
+app.post('/api/master/clubs/:id/admin-access-link', requireMaster, writeLimiter, async (req, res, next) => {
+  try {
+    const club = await Club.findOne({ id: req.params.id })
+    if (!club) return res.status(404).json({ error: 'Cliente não encontrado.' })
+    if (club.demoMode) return res.status(409).json({ error: 'O modo demonstração não usa senha.' })
+
     res.setHeader('Cache-Control', 'no-store')
-    res.json({ url, expiresAt, purpose, club: publicClub(club) })
+    res.json(await createClubAdminAccessLink(club, req, req.body?.purpose === 'reset' ? 'reset' : 'first-access'))
   } catch (error) {
     next(error)
   }

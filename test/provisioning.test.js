@@ -126,3 +126,21 @@ test('expired links and mismatched passwords cannot replace the password', async
   assert.equal((await post('/api/admin-access/test/complete',{password:'synthetic-password',confirmation:'different'})).status,400)
   assert.equal(Token.findOneAndUpdate.mock.callCount(),0)
 })
+
+
+test('master generates a hashed single-use password link with 30-minute expiry and registered WhatsApp', async t => {
+  const club=fixture();club.adminAuth={passwordHash:'private-hash',passwordSalt:'private-salt'}
+  let stored
+  t.mock.method(Club,'findOne',async()=>club)
+  t.mock.method(Token,'deleteMany',async filter=>{assert.equal(filter.clubId,club.id);return {}})
+  t.mock.method(Token,'create',async row=>{stored=row;return row})
+  t.mock.method(Log,'create',async()=>({}))
+  const before=Date.now()
+  const response=await post('/api/master/clubs/'+club.id+'/admin-access-link',{purpose:'reset',phone:'69911110000'},masterHeaders)
+  assert.equal(response.status,200)
+  const data=await response.json(), raw=new URL(data.url).searchParams.get('adminAccessToken')
+  assert.equal(raw.length,43);assert.equal(stored.tokenHash.length,64);assert.notEqual(raw,stored.tokenHash)
+  assert.equal(stored.purpose,'reset');assert.ok(stored.expiresAt.getTime()>=before+29*60000 && stored.expiresAt.getTime()<=Date.now()+30*60000)
+  assert.equal(new URL(data.whatsappUrl).pathname,'/5569999990000');assert.ok(new URL(data.whatsappUrl).searchParams.get('text').includes(data.url));assert.doesNotMatch(JSON.stringify(data),/private-hash|private-salt/)
+  club.demoMode=true;assert.equal((await post('/api/master/clubs/'+club.id+'/admin-access-link',{},masterHeaders)).status,409)
+})

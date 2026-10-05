@@ -40,6 +40,7 @@ test('search always restricts published entries, escapes regex and combines requ
 test('free signup publishes immediately; master review clears notifications and rejection hides the entry and photos', async t => {
   let stored
   t.mock.method(Access, 'countDocuments', async () => 0)
+  t.mock.method(mongoose.model('ClubRecoveryRequest'), 'countDocuments', async () => 2)
   t.mock.method(Entry, 'create', async value => { stored = value; return value })
   t.mock.method(Club, 'create', async () => assert.fail('No paid club should be created'))
   t.mock.method(Payment, 'create', async () => assert.fail('No payment should be created'))
@@ -58,7 +59,7 @@ test('free signup publishes immediately; master review clears notifications and 
   assert.equal((await req('/api/master/catalog/notifications')).status, 401)
   assert.equal((await req('/api/master/catalog/entries/' + stored.id)).status, 401)
   const notification = await req('/api/master/catalog/notifications', null, auth)
-  const inbox = await notification.json(); assert.equal(inbox.count, 1); assert.equal(inbox.entries[0].email, undefined); assert.equal(inbox.entries[0].ownerName, undefined)
+  const inbox = await notification.json(); assert.equal(inbox.count, 1); assert.equal(inbox.recoveryCount, 2); assert.equal(inbox.entries[0].email, undefined); assert.equal(inbox.entries[0].ownerName, undefined)
   const privatePhoto = await req('/api/master/catalog/photos/' + stored.id + '/0', null, auth); assert.equal(privatePhoto.status, 200); assert.equal(Buffer.from(await privatePhoto.arrayBuffer()).equals(bytes), true)
   t.mock.method(Entry, 'findOneAndUpdate', (_filter, update) => ({ lean: async () => { stored = { ...stored, ...update.$set }; return stored } }))
   assert.equal((await req('/api/master/catalog/' + stored.id, { ...input, status: 'published' }, auth, 'PUT')).status, 200)
