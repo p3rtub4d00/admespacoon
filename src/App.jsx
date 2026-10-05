@@ -1,3 +1,4 @@
+import AiChatControl from './AiChatControl'
 import CatalogNotifications from './CatalogNotifications'
 import CatalogAdmin from './CatalogAdmin'
 import ReferralPartners from './ReferralPartners'
@@ -1205,6 +1206,7 @@ function ClubDetails({ clubId, onClose, onEdit, act, onLicense, onRefresh }) {
               </details>
             </section>
 
+            <AiChatControl key={club.id} clubId={club.id} />
             <section className="payment-provider-section">
               <div className="detail-section-head">
                 <div>
