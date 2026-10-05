@@ -210,3 +210,7 @@ Atualize o Master antes do catálogo. Não há novas variáveis de ambiente ou m
 Um novo pedido de acesso de um anunciante cadastrado dispara o Web Push existente do Master para os dispositivos habilitados. Uma nova tentativa também alerta quando o pedido já está pendente, incluindo pedidos antigos salvos antes da integração do push. Um limite atômico de um alerta por minuto e por pedido evita duplicação por cliques rápidos ou tentativas simultâneas. Uma solicitação atendida ou arquivada pode ser reaberta após o intervalo existente de 10 minutos. O payload não contém telefone, senha ou link de ativação. Ao tocar no alerta, o Master abre a área de notificações (após login, se necessário). Uma falha de entrega não impede salvar o pedido.
 
 Não há novas variáveis de ambiente. As notificações precisam estar habilitadas no dispositivo; o recebimento físico deve ser conferido no PWA após atualizar o serviço Master.
+
+### Instagram no anúncio
+
+Instagram é opcional para espaços e fornecedores e aceita somente `@perfil` (até 30 caracteres no nome, com letras, números, ponto e sublinhado). Links não são aceitos. O Master e o responsável podem editar o perfil; a API pública retorna o perfil informado. Anúncios antigos continuam funcionando sem preenchimento. Atualize o Master antes do catálogo, sem novas variáveis de ambiente.
