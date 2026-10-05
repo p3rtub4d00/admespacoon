@@ -214,3 +214,9 @@ Não há novas variáveis de ambiente. As notificações precisam estar habilita
 ### Instagram no anúncio
 
 Instagram é opcional para espaços e fornecedores e aceita somente `@perfil` (até 30 caracteres no nome, com letras, números, ponto e sublinhado). Links não são aceitos. O Master e o responsável podem editar o perfil; a API pública retorna o perfil informado. Anúncios antigos continuam funcionando sem preenchimento. Atualize o Master antes do catálogo, sem novas variáveis de ambiente.
+
+### Estruturas adicionais do espaço
+
+TV, bebedouro e ar-condicionado integram as opções fixas e os filtros do catálogo. O cadastro e a edição pelo proprietário ou Master também aceitam até 20 estruturas personalizadas, com até 60 caracteres por item. Elas aparecem no anúncio e podem ser removidas na edição; não criam filtros globais. Nomes equivalentes às opções fixas selecionam a opção existente, evitando duplicação. Anúncios antigos continuam funcionando sem preenchimento adicional.
+
+Publicar o backend/painel Master antes do catálogo. Não há novas variáveis de ambiente nem migração obrigatória.
