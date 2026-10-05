@@ -16,6 +16,8 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  aiChat: id => request('/api/master/clubs/' + encodeURIComponent(id) + '/ai-chat'),
+  saveAiChat: (id, payload) => request('/api/master/clubs/' + encodeURIComponent(id) + '/ai-chat', { method: 'PUT', body: JSON.stringify(payload) }),
   catalogAccessRequests: (page = 1) => request('/api/master/catalog/access-requests?page=' + page),
   issueCatalogAccess: (id, entryIds) => request('/api/master/catalog/access-requests/' + encodeURIComponent(id) + '/issue', { method: 'POST', body: JSON.stringify({ entryIds }) }),
   dismissCatalogAccess: id => request('/api/master/catalog/access-requests/' + encodeURIComponent(id) + '/dismiss', { method: 'POST', body: '{}' }),

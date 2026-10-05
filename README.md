@@ -220,3 +220,10 @@ Instagram é opcional para espaços e fornecedores e aceita somente `@perfil` (a
 TV, bebedouro e ar-condicionado integram as opções fixas e os filtros do catálogo. O cadastro e a edição pelo proprietário ou Master também aceitam até 20 estruturas personalizadas, com até 60 caracteres por item. Elas aparecem no anúncio e podem ser removidas na edição; não criam filtros globais. Nomes equivalentes às opções fixas selecionam a opção existente, evitando duplicação. Anúncios antigos continuam funcionando sem preenchimento adicional.
 
 Publicar o backend/painel Master antes do catálogo. Não há novas variáveis de ambiente nem migração obrigatória.
+
+
+### Controle do assistente com IA
+
+Nos detalhes de cada clube, a seção Assistente com IA permite ativar o chat e definir o limite mensal (padrão: 1.000 perguntas). Todos os clubes começam desativados. A chave `GEMINI_API_KEY` deve estar no ambiente do serviço de reservas, não no Master nem no navegador. Publique o Master antes do serviço de reservas. Ativar a opção não altera a mensalidade.
+
+O painel mostra consultas iniciadas, chamadas ao modelo e tokens do mês em Porto Velho. Inclui falhas; contadores são sincronizados pelo serviço do clube após consultas. Reenvios não duplicam os valores e uma falha de sincronização é recuperada na próxima consulta. Mensagens não são armazenadas no Master. O limite de perguntas não representa orçamento financeiro nem substitui as cotas do provedor.

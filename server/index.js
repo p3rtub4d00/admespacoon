@@ -1,3 +1,4 @@
+import { installMasterAiChat } from './ai-chat.js'
 import { installCatalog } from './catalog.js'
 import { installReferrals, isReferralMonthlyPayment, referralPercentage } from './referrals.js'
 import { installRegistrationInvites } from './registration-invites.js'
@@ -113,6 +114,7 @@ const clubSchema = new mongoose.Schema({
   state: String,
   deletedAt: { type: Date, default: null, index: true },
   demoMode: { type: Boolean, default: false, index: true },
+  aiChat: { enabled: { type: Boolean, default: false }, monthlyLimit: { type: Number, default: 1000 } },
   referral: { partnerId: String, partnerName: String, amount: Number, percentage: Number, inviteId: String },
   reservationPaymentProvider: {
     type: String,
@@ -1625,6 +1627,8 @@ app.get('/api/master/clubs/:id/details', requireMaster, async (req, res, next) =
     next(error)
   }
 })
+
+installMasterAiChat({ app, mongoose, Club, requireMaster, writeLimiter, authenticateClubLicense, logAction })
 
 installCatalog({ app, mongoose, requireMaster, writeLimiter, logAction, sessionSecret: JWT_SECRET, notifyMaster })
 
@@ -3222,6 +3226,7 @@ app.get('/api/license/status', publicLicenseLimiter, async (req, res, next) => {
     res.json({
       ok: true,
       active: effectiveAccess(club),
+      aiChat: { enabled: club.aiChat?.enabled === true, monthlyLimit: club.aiChat?.monthlyLimit || 1000 },
       demoMode: club.demoMode === true,
       status: club.demoMode ? 'demo' : club.system.status,
       billingStatus: club.demoMode ? 'demo' : club.billing.status,
